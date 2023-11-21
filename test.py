@@ -2,7 +2,7 @@ import os
 import yaml
 import json
 from argparse import ArgumentParser
-import pdb
+# import pdb
 import numpy as np
 parser = ArgumentParser()
 parser.add_argument('--config',
@@ -153,7 +153,6 @@ def test(args):
             for node_, edge_, pred_node_, pred_edge_ in zip(nodes, edges, pred_nodes, pred_edges):
                 topo_results.append(compute_topo(node_.cpu(), edge_.cpu(), pred_node_, pred_edge_))
     
-    pdb.set_trace()
     topo_array=np.array(topo_results)
     print(topo_array.mean(0))
     # Determine smd

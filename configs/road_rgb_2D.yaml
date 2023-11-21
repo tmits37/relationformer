@@ -3,7 +3,7 @@ DATA:
   BATCH_SIZE: 32 #16
   TEST_BATCH_SIZE: 128 #16
   DATA_PATH: './data/20cities/train_data/'        # Path to dataset, could be overwritten by command line argument
-  TEST_DATA_PATH: './data/20cities/test_data/''
+  TEST_DATA_PATH: './data/20cities/test_data/'
   DATASET: 'US20-road-network-2D'     # Dataset name
   IMG_SIZE: [128, 128]    # Input image size
   NUM_WORKERS: 4          # Number of data loading threads
