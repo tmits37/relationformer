@@ -4,7 +4,7 @@ from torchvision.ops import batched_nms
 import itertools
 
 
-def relation_infer(h, out, model, obj_token, rln_token, nms=False, map_=False):
+def relation_infer(h, out, relation_embed, obj_token, rln_token, nms=False, map_=False):
     # all token except the last one is object token
     object_token = h[...,:obj_token,:]
     
@@ -14,7 +14,7 @@ def relation_infer(h, out, model, obj_token, rln_token, nms=False, map_=False):
 
     # valid tokens
     valid_token = torch.argmax(out['pred_logits'], -1).detach()
-
+    print(object_token, valid_token)
     # apply nms on valid tokens
     if nms:
         valid_token_nms = torch.zeros_like(valid_token)
@@ -76,8 +76,8 @@ def relation_infer(h, out, model, obj_token, rln_token, nms=False, map_=False):
                 relation_feature1  = torch.cat((object_token[batch_id,node_pairs[0],:], object_token[batch_id,node_pairs[1],:]), 1)
                 relation_feature2  = torch.cat((object_token[batch_id,node_pairs[1],:], object_token[batch_id,node_pairs[0],:]), 1)
 
-            relation_pred1 = model.relation_embed(relation_feature1).detach()
-            relation_pred2 = model.relation_embed(relation_feature2).detach()
+            relation_pred1 = relation_embed(relation_feature1).detach()
+            relation_pred2 = relation_embed(relation_feature2).detach()
             relation_pred = (relation_pred1+relation_pred2)/2.0
 
             pred_rel = torch.nonzero(torch.argmax(relation_pred, -1)).squeeze(1).cpu().numpy()

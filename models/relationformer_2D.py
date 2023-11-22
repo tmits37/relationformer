@@ -14,6 +14,19 @@ from .deformable_detr_backbone import build_backbone
 from .deformable_detr_2D import build_deforamble_transformer
 from .utils import nested_tensor_from_tensor_list, NestedTensor, inverse_sigmoid
 
+class RelationEmbed(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        if config.MODEL.DECODER.RLN_TOKEN > 0:
+            self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*3, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
+        else:
+            self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*2, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
+    def forward(self, x):
+        x = self.relation_embed(x)
+        return x
+
+
 class RelationFormer(nn.Module):
     """ This is the RelationFormer module that performs object detection """
 
@@ -36,10 +49,10 @@ class RelationFormer(nn.Module):
         self.class_embed = nn.Linear(config.MODEL.DECODER.HIDDEN_DIM, 2)
         self.bbox_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM, config.MODEL.DECODER.HIDDEN_DIM, 4, 3)
         
-        if config.MODEL.DECODER.RLN_TOKEN > 0:
-            self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*3, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
-        else:
-            self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*2, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
+        # if config.MODEL.DECODER.RLN_TOKEN > 0:
+        #     self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*3, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
+        # else:
+        #     self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*2, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
 
         if not self.two_stage:
             self.query_embed = nn.Embedding(self.num_queries, self.hidden_dim*2)    # why *2
@@ -148,4 +161,8 @@ def build_relationformer(config, **kwargs):
         **kwargs
     )
 
+    return model
+
+def build_relation_embed(config):
+    model = RelationEmbed(config)
     return model

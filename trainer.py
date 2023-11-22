@@ -30,8 +30,9 @@ class RelationformerTrainer(SupervisedTrainer):
         edges = [edge.to(engine.state.device,  non_blocking=False) for edge in edges]
         target = {'nodes': nodes, 'edges': edges}
 
+        # network0 : net, network1: seg_net (relation_embed)
         self.network[0].train()
-        self.network[1].eval()
+        self.network[1].train()
         self.optimizer.zero_grad()
         
         h, out, srcs = self.network[0](images, seg=False)
@@ -73,8 +74,8 @@ class RelationformerTrainer(SupervisedTrainer):
         return {"images": images, "points": nodes, "edges": edges, "loss": losses}
 
 
-def build_trainer(train_loader, net, seg_net, loss, optimizer, scheduler, writer,
-                  evaluator, config, device, fp16=False):
+def build_trainer(train_loader, net, relation_embed, loss, optimizer, scheduler, writer,
+                  evaluator, config, device, fp16=False, distributed=False, local_rank=0):
     """[summary]
 
     Args:
@@ -90,6 +91,7 @@ def build_trainer(train_loader, net, seg_net, loss, optimizer, scheduler, writer
     Returns:
         [type]: [description]
     """
+    interation_interval = 10
     train_handlers = [
         LrScheduleHandler(
             lr_scheduler=scheduler,
@@ -107,7 +109,7 @@ def build_trainer(train_loader, net, seg_net, loss, optimizer, scheduler, writer
         ),
         CheckpointSaver(
             save_dir=os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED), 'models'),
-            save_dict={"net": net, "optimizer": optimizer, "scheduler": scheduler},
+            save_dict={"net": net, "relation_embed": relation_embed, "optimizer": optimizer, "scheduler": scheduler},
             save_interval=1,
             n_saved=1
         ),
@@ -116,45 +118,63 @@ def build_trainer(train_loader, net, seg_net, loss, optimizer, scheduler, writer
             tag_name="classification_loss",
             output_transform=lambda x: x["loss"]["class"],
             global_epoch_transform=lambda x: scheduler.last_epoch,
-            iteration_interval=10,
+            iteration_interval=interation_interval,
         ),
         TensorBoardStatsHandler(
             writer,
             tag_name="node_loss",
             output_transform=lambda x: x["loss"]["nodes"],
             global_epoch_transform=lambda x: scheduler.last_epoch,
-            iteration_interval=10,
+            iteration_interval=interation_interval,
         ),
         TensorBoardStatsHandler(
             writer,
             tag_name="edge_loss",
             output_transform=lambda x: x["loss"]["edges"],
             global_epoch_transform=lambda x: scheduler.last_epoch,
-            iteration_interval=10,
+            iteration_interval=interation_interval,
         ),
         TensorBoardStatsHandler(
             writer,
             tag_name="box_loss",
             output_transform=lambda x: x["loss"]["boxes"],
             global_epoch_transform=lambda x: scheduler.last_epoch,
-            iteration_interval=10,
+            iteration_interval=interation_interval,
         ),
         TensorBoardStatsHandler(
             writer,
             tag_name="card_loss",
             output_transform=lambda x: x["loss"]["cards"],
             global_epoch_transform=lambda x: scheduler.last_epoch,
-            iteration_interval=10,
+            iteration_interval=interation_interval,
         ),
         TensorBoardStatsHandler(
             writer,
             tag_name="total_loss",
             output_transform=lambda x: x["loss"]["total"],
             global_epoch_transform=lambda x: scheduler.last_epoch,
-            iteration_interval=10,
+            iteration_interval=interation_interval,
         )
     ]
-    # train_post_transform = Compose(
+
+
+    # if (local_rank==0) and (distributed==True):
+    # if local_rank == 0:
+    #     train_handlers.extend(
+    #         [
+    #             # StatsHandler(
+    #             #     tag_name="train_loss",
+    #             #     output_transform=lambda x: x["loss"]["total"]
+    #             # ),
+    #             CheckpointSaver(
+    #                 save_dir=os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED), 'models'),
+    #                 save_dict={"net": net, "optimizer": optimizer, "scheduler": scheduler},
+    #                 save_interval=1,
+    #                 n_saved=1
+    #             ),
+    #         ]
+    #     )
+    # # train_post_transform = Compose(
     #     [AsDiscreted(keys=("pred", "label"),
     #     argmax=(True, False),
     #     to_onehot=True,
@@ -165,7 +185,7 @@ def build_trainer(train_loader, net, seg_net, loss, optimizer, scheduler, writer
         device=device,
         max_epochs=config.TRAIN.EPOCHS,
         train_data_loader=train_loader,
-        network=[net, seg_net],
+        network=[net, relation_embed],
         optimizer=optimizer,
         loss_function=loss,
         inferer=SimpleInferer(),

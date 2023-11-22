@@ -37,6 +37,8 @@ class RelationformerEvaluator(SupervisedEvaluator):
         device: torch.device,
         val_data_loader: Union[Iterable, DataLoader],
         network: torch.nn.Module,
+        # network: List = None, 
+        relation_embed: torch.nn.Module,
         epoch_length: Optional[int] = None,
         non_blocking: bool = False,
         prepare_batch: Callable = default_prepare_batch,
@@ -74,8 +76,8 @@ class RelationformerEvaluator(SupervisedEvaluator):
             network = network,
             inferer = SimpleInferer() if inferer is None else inferer
         )
-
         self.config = kwargs.pop('config')
+        self.relation_embed = relation_embed
         
     def _iteration(self, engine, batchdata):
         images, nodes, edges = batchdata[0], batchdata[2], batchdata[3]
@@ -86,12 +88,14 @@ class RelationformerEvaluator(SupervisedEvaluator):
         nodes = [node.to(engine.state.device,  non_blocking=False) for node in nodes]
         edges = [edge.to(engine.state.device,  non_blocking=False) for edge in edges]
 
+        # self.network.eval()
         self.network.eval()
-        
+        self.relation_embed.eval()
+
         h, out, srcs = self.network(images, seg=False)
 
         pred_nodes, pred_edges = relation_infer(
-            h.detach(), out, self.network, self.config.MODEL.DECODER.OBJ_TOKEN, self.config.MODEL.DECODER.RLN_TOKEN
+            h.detach(), out, self.relation_embed, self.config.MODEL.DECODER.OBJ_TOKEN, self.config.MODEL.DECODER.RLN_TOKEN
         )
         
         # if self.config.TRAIN.SAVE_VAL:
@@ -106,11 +110,18 @@ class RelationformerEvaluator(SupervisedEvaluator):
 
         gc.collect()
         torch.cuda.empty_cache()
-        
+        # print(f"Nodes shape: {len(images)}, type: {type(images)}")
+        print(f"Nodes shape: {nodes[0].shape}, type: {type(nodes)}")
+        print(f"Edges shape: {edges[0].shape}, type: {type(edges)}")
+        print(f"Pred Nodes shape: {pred_nodes[0].shape}, type: {type(pred_nodes)}")
+        print(f"Pred Edges shape: {pred_edges[0].shape}, type: {type(pred_edges)}")
+        # torch.Size([5, 2]) torch.Size([4, 2]) torch.Size([0, 2]) torch.Size([0, 2])
+
+
         return {"images": images, "nodes": nodes, "edges": edges, "pred_nodes":pred_nodes, "pred_edges":pred_edges}
 
 
-def build_evaluator(val_loader, net, optimizer, scheduler, writer, config, device):
+def build_evaluator(val_loader, net, relation_embed, optimizer, scheduler, writer, config, device, distributed=False, local_rank=0):
     """[summary]
 
     Args:
@@ -125,7 +136,7 @@ def build_evaluator(val_loader, net, optimizer, scheduler, writer, config, devic
         StatsHandler(output_transform=lambda x: None),
         CheckpointSaver(
             save_dir=os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED), 'models'),
-            save_dict={"net": net, "optimizer": optimizer, "scheduler": scheduler},
+            save_dict={"net": net, "relation_embed": relation_embed, "optimizer": optimizer, "scheduler": scheduler},
             save_key_metric=True,
             key_metric_n_saved=1,
             save_interval=1,
@@ -139,6 +150,21 @@ def build_evaluator(val_loader, net, optimizer, scheduler, writer, config, devic
         ),
     ]
 
+    # if local_rank==0:
+    #     val_handlers.extend(
+    #         [
+    #             StatsHandler(output_transform=lambda x: None),
+    #             CheckpointSaver(
+    #                 save_dir=os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED),
+    #                                     'models'),
+    #                 save_dict={"net": net, "optimizer": optimizer, "scheduler": scheduler},
+    #                 save_key_metric=False,
+    #                 key_metric_n_saved=5,
+    #                 save_interval=1
+    #             ),
+    #         ]
+    #     )
+
     # val_post_transform = Compose(
     #     [AsDiscreted(keys=("pred", "label"),
     #     argmax=(True, False),
@@ -151,6 +177,7 @@ def build_evaluator(val_loader, net, optimizer, scheduler, writer, config, devic
         device=device,
         val_data_loader=val_loader,
         network=net,
+        relation_embed=relation_embed,
         inferer=SimpleInferer(),
         # post_transform=val_post_transform,
         key_val_metric={

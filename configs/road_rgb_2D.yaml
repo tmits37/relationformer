@@ -65,7 +65,7 @@ TRAIN:
   CLIP_MAX_NORM: 0.1  # hardcoded
 
   SAVE_PATH: "./trained_weights/"          # save path for the checkpoint, log and val results
-  VAL_INTERVAL: 10                  # validation interval
+  VAL_INTERVAL: 1000                  # validation interval
   SAVE_VAL: False                   # save validation data
 
   # loss weight
