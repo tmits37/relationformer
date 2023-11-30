@@ -15,7 +15,6 @@ import gc
 
 from utils import get_total_grad_norm
 
-
 # define customized trainer
 class RelationformerTrainer(SupervisedTrainer):
 
@@ -30,42 +29,14 @@ class RelationformerTrainer(SupervisedTrainer):
         edges = [edge.to(engine.state.device,  non_blocking=False) for edge in edges]
         target = {'nodes': nodes, 'edges': edges}
 
-        # network0 : net, network1: seg_net (relation_embed)
         self.network[0].train()
         self.network[1].train()
         self.optimizer.zero_grad()
         
         h, out, srcs = self.network[0](images, seg=False)
-
-        # _, _, seg_srcs = self.network[1](seg, seg=True)
-        
-        # # valid_token = torch.argmax(out['pred_logits'], -1)
-        # # valid_token = torch.sigmoid(nodes_prob[...,3])>0.5
-        # # print('valid_token number', valid_token.sum(1))
-
-        # # pred_nodes, pred_edges = relation_infer(h, out, self.network.relation_embed)
-
         losses = self.loss_function(h, out, target)
-        
-        # loss_feat = 0
-        # for i in range(len(seg_srcs)):
-        #     loss_feat += F.l1_loss(srcs[i], seg_srcs[i].detach())
-
-        # losses.update({'feature':loss_feat})
-        # losses['total'] = losses['total']+loss_feat
-        # Clip the gradient
-        # clip_grad_norm_(
-        #     self.network.parameters(),
-        #     max_norm=GRADIENT_CLIP_L2_NORM,
-        #     norm_type=2,
-        # )
         losses['total'].backward()
 
-        # if 0.1 > 0:
-        #     _ = torch.nn.utils.clip_grad_norm_(self.network[0].parameters(), 0.1)
-        # else:
-        #     _ = get_total_grad_norm(self.network[0].parameters(), 0.1)
-    
         self.optimizer.step()
         
         gc.collect()
@@ -102,16 +73,6 @@ def build_trainer(train_loader, net, relation_embed, loss, optimizer, scheduler,
             validator=evaluator,
             interval=config.TRAIN.VAL_INTERVAL,
             epoch_level=True
-        ),
-        StatsHandler(
-            tag_name="train_loss",
-            output_transform=lambda x: x["loss"]["total"]
-        ),
-        CheckpointSaver(
-            save_dir=os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED), 'models'),
-            save_dict={"net": net, "relation_embed": relation_embed, "optimizer": optimizer, "scheduler": scheduler},
-            save_interval=1,
-            n_saved=1
         ),
         TensorBoardStatsHandler(
             writer,
@@ -156,30 +117,22 @@ def build_trainer(train_loader, net, relation_embed, loss, optimizer, scheduler,
             iteration_interval=interation_interval,
         )
     ]
-
-
-    # if (local_rank==0) and (distributed==True):
-    # if local_rank == 0:
-    #     train_handlers.extend(
-    #         [
-    #             # StatsHandler(
-    #             #     tag_name="train_loss",
-    #             #     output_transform=lambda x: x["loss"]["total"]
-    #             # ),
-    #             CheckpointSaver(
-    #                 save_dir=os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED), 'models'),
-    #                 save_dict={"net": net, "optimizer": optimizer, "scheduler": scheduler},
-    #                 save_interval=1,
-    #                 n_saved=1
-    #             ),
-    #         ]
-    #     )
-    # # train_post_transform = Compose(
-    #     [AsDiscreted(keys=("pred", "label"),
-    #     argmax=(True, False),
-    #     to_onehot=True,
-    #     n_classes=N_CLASS)]
-    # )
+    if local_rank == 0:
+        print('local_rank is zero pass')
+        train_handlers.extend(
+            [
+                StatsHandler(
+                    tag_name="train_loss",
+                    output_transform=lambda x: x["loss"]["total"]
+                ),
+        #         CheckpointSaver(
+        #             save_dir=os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED), 'models'),
+        #             save_dict={"net": net, "optimizer": optimizer, "scheduler": scheduler},
+        #             save_interval=1,
+        #             n_saved=1
+        #         ),
+            ]
+        )
 
     trainer = RelationformerTrainer(
         device=device,
@@ -189,15 +142,7 @@ def build_trainer(train_loader, net, relation_embed, loss, optimizer, scheduler,
         optimizer=optimizer,
         loss_function=loss,
         inferer=SimpleInferer(),
-        # post_transform=train_post_transform,
-        # key_train_metric={
-        #     "train_mean_dice": MeanDice(
-        #         include_background=False,
-        #         output_transform=lambda x: (x["pred"], x["label"]),
-        #     )
-        # },
         train_handlers=train_handlers,
-        # amp=fp16,
     )
 
     return trainer

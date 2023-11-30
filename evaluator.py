@@ -107,16 +107,15 @@ class RelationformerEvaluator(SupervisedEvaluator):
         #         save_input(path, i, images[i,0,...].cpu().numpy(), node.cpu().numpy(), edge.cpu().numpy())
         #         path = os.path.join(root_path, "pred_epoch_"+str(engine.state.epoch).zfill(3)+"_iteration_"+str(engine.state.iteration).zfill(5))
         #         save_output(path, i, pred_node.cpu().numpy(), pred_edge.cpu().numpy())
-
-        gc.collect()
-        torch.cuda.empty_cache()
-        # print(f"Nodes shape: {len(images)}, type: {type(images)}")
+                # print(f"Nodes shape: {len(images)}, type: {type(images)}")
         print(f"Nodes shape: {nodes[0].shape}, type: {type(nodes)}")
         print(f"Edges shape: {edges[0].shape}, type: {type(edges)}")
         print(f"Pred Nodes shape: {pred_nodes[0].shape}, type: {type(pred_nodes)}")
         print(f"Pred Edges shape: {pred_edges[0].shape}, type: {type(pred_edges)}")
         # torch.Size([5, 2]) torch.Size([4, 2]) torch.Size([0, 2]) torch.Size([0, 2])
 
+        gc.collect()
+        torch.cuda.empty_cache()
 
         return {"images": images, "nodes": nodes, "edges": edges, "pred_nodes":pred_nodes, "pred_edges":pred_edges}
 
@@ -133,44 +132,34 @@ def build_evaluator(val_loader, net, relation_embed, optimizer, scheduler, write
         [type]: [description]
     """
     val_handlers = [
-        StatsHandler(output_transform=lambda x: None),
-        CheckpointSaver(
-            save_dir=os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED), 'models'),
-            save_dict={"net": net, "relation_embed": relation_embed, "optimizer": optimizer, "scheduler": scheduler},
-            save_key_metric=True,
-            key_metric_n_saved=1,
-            save_interval=1,
-            key_metric_negative_sign=True
-        ),
         TensorBoardStatsHandler(
             writer,
             tag_name="val_smd",
             output_transform=lambda x: None,
             global_epoch_transform=lambda x: scheduler.last_epoch
         ),
+        StatsHandler(output_transform=lambda x: None),
     ]
 
-    # if local_rank==0:
-    #     val_handlers.extend(
-    #         [
-    #             StatsHandler(output_transform=lambda x: None),
-    #             CheckpointSaver(
-    #                 save_dir=os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED),
-    #                                     'models'),
-    #                 save_dict={"net": net, "optimizer": optimizer, "scheduler": scheduler},
-    #                 save_key_metric=False,
-    #                 key_metric_n_saved=5,
-    #                 save_interval=1
-    #             ),
-    #         ]
-    #     )
-
-    # val_post_transform = Compose(
-    #     [AsDiscreted(keys=("pred", "label"),
-    #     argmax=(True, False),
-    #     to_onehot=True,
-    #     n_classes=N_CLASS)]
-    # )
+    print(f"Building the evaluator, local rank is {local_rank}")
+    print(f"Whether distributed: {distributed}")
+    if local_rank==0:
+        if distributed:
+            val_handlers.extend(
+                [
+                    CheckpointSaver(
+                        save_dir=os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED),
+                                            'models'),
+                        save_dict={
+                            "net": net.module if distributed else net,
+                            "relation_embed": relation_embed.module if distributed else relation_embed,
+                            "optimizer": optimizer, "scheduler": scheduler},
+                        save_key_metric=False,
+                        key_metric_n_saved=5,
+                        save_interval=1
+                    ),
+                ]
+            )
 
     evaluator = RelationformerEvaluator(
         config= config,

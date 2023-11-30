@@ -87,7 +87,7 @@ def test(args):
 
     # load checkpoint
     checkpoint = torch.load(args.checkpoint, map_location='cpu')
-    net.load_state_dict(checkpoint['net'])
+    net.load_state_dict(checkpoint['model_state_dict'])
     net.eval()
 
     # init metric
@@ -112,7 +112,7 @@ def test(args):
 
             h, out, _ = net(images, seg=False)
             pred_nodes, pred_edges, pred_nodes_box, pred_nodes_box_score, pred_nodes_box_class, pred_edges_box_score, pred_edges_box_class = relation_infer(
-                h.detach(), out, net, config.MODEL.DECODER.OBJ_TOKEN, config.MODEL.DECODER.RLN_TOKEN,
+                h.detach(), out, net.relation_embed, config.MODEL.DECODER.OBJ_TOKEN, config.MODEL.DECODER.RLN_TOKEN,
                 nms=False, map_=True
             )
 

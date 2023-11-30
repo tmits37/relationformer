@@ -9,7 +9,8 @@ import logging
 import ignite
 import torch
 import torch.nn as nn
-from monai.data import DataLoader
+# from monai.data import DataLoader
+from torch.utils.data import DataLoader
 from dataset_road_network import build_road_network_data
 from evaluator import build_evaluator
 from trainer import build_trainer
@@ -25,7 +26,7 @@ from losses import SetCriterion
 from ignite.contrib.handlers.tqdm_logger import ProgressBar
 import torch.multiprocessing
 
-os.environ['TORCH_DISTRIBUTED_DEBUG']='DETAIL'
+# os.environ['TORCH_DISTRIBUTED_DEBUG']='DETAIL'
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -48,6 +49,7 @@ def parse_args():
     parser.add_argument('--rank', type=int, default=0)
     args = parser.parse_args()
     if 'LOCAL_RANK' not in os.environ:
+        print("Setting the Local Rank")
         os.environ['LOCAL_RANK'] = str(args.local_rank)
         
     return args
@@ -57,18 +59,18 @@ def init_for_distributed(args):
 
 
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
-        print(os.environ['RANK'], os.environ['WORLD_SIZE'])
+        print(os.environ['RANK'], os.environ['LOCAL_RANK'], os.environ['WORLD_SIZE'])
         args.rank = int(os.environ["RANK"])
         args.world_size = int(os.environ['WORLD_SIZE'])
-        args.gpu = int(os.environ['LOCAL_RANK'])
+        args.local_rank = int(os.environ['LOCAL_RANK'])
         args.distributed = True
     elif 'SLURM_PROCID' in os.environ:
         args.rank = int(os.environ['SLURM_PROCID'])
-        args.gpu = args.rank % torch.cuda.device_count()
+        args.local_rank = args.rank % torch.cuda.device_count()
     else:
         print('Not using distributed mode')
         args.distributed = False
-        args.gpu = 0
+        args.local_rank = 0
         return None
 
     # 1. setting for distributed training
@@ -78,12 +80,12 @@ def init_for_distributed(args):
     # if opts.rank is not None:
     #     print("Use GPU: {} for training".format(local_gpu_id))
 
-    torch.cuda.set_device(args.gpu)
-    args.dist_backend = 'nccl'
+    torch.cuda.set_device(args.local_rank)
+    args.dist_backend = 'gloo' # nvcc
     print('| distributed init (rank {}): {}'.format(
         args.rank, 'env://'), flush=True)
     torch.distributed.init_process_group(backend=args.dist_backend, 
-                                         init_method="tcp://127.0.0.1:29500",
+                                         init_method="env://127.0.0.1:29500",
                                          world_size=args.world_size, 
                                          rank=args.rank)
     torch.distributed.barrier()
@@ -150,14 +152,14 @@ def main(args):
     # device = torch.device("cuda") if args.device=='cuda' else torch.device("cpu")
 
     init_for_distributed(args)
-    local_gpu_id = args.gpu
+    # gpu 2개 사용할 경우, world_size = 2, rank = 0 and 1 으로 두번 실행되는것을 관찰할 수 있다.
+    print(args.rank, args.local_rank)
+
     device = torch.device(args.device)
-    if args.distributed:
-        # dist.init_process_group(backend='nccl', init_method='env://', world_size=args.world_size, rank=args.rank)
-        # args.rank = igdist.get_rank()
-        args.rank = torch.distributed.get_rank()
-        device = torch.device(f"cuda:{args.rank}")
-        print(args.rank, device, local_gpu_id) # 0, cuda:0, 0
+    # if args.distributed:
+    #     args.rank = torch.distributed.get_rank()
+    #     device = torch.device(f"cuda:{args.rank}")
+    #     print(args.rank, device, args.local_rank) # 0, cuda:0, 0
 
 
     ### Setting the dataset
@@ -169,13 +171,11 @@ def main(args):
     else:
         train_sampler = torch.utils.data.RandomSampler(train_ds)
         val_sampler = torch.utils.data.SequentialSampler(val_ds)
-    # batch_train_sampler = torch.utils.data.BatchSampler(train_sampler, args.batch_size, drop_last=True)
 
 
     train_loader = DataLoader(
         train_ds,
         batch_size=config.DATA.BATCH_SIZE,
-        # shuffle=True,
         num_workers=config.DATA.NUM_WORKERS,
         sampler=train_sampler,
         collate_fn=image_graph_collate_road_network,
@@ -185,7 +185,6 @@ def main(args):
     val_loader = DataLoader(
         val_ds,
         batch_size=int(config.DATA.BATCH_SIZE / args.world_size),
-        # shuffle=False,
         num_workers=int(config.DATA.NUM_WORKERS / args.world_size),
         sampler=val_sampler,
         collate_fn=image_graph_collate_road_network,
@@ -195,23 +194,19 @@ def main(args):
 
     ### Setting the model
     net = build_model(config) # .to(device)
-    # seg_net = build_model(config) # .to(device)
     matcher = build_matcher(config)
     relation_embed = build_relation_embed(config)
 
     if args.distributed:
-        net = DistributedDataParallel(net.cuda(local_gpu_id), 
-                                      device_ids=[local_gpu_id],
+        device = torch.device(f"cuda:{args.rank}")
+
+        net = DistributedDataParallel(net.cuda(args.local_rank), 
+                                      device_ids=[args.local_rank],
                                       broadcast_buffers=False,
                                       find_unused_parameters=True
                                       )
-        # seg_net = DistributedDataParallel(seg_net.cuda(local_gpu_id), 
-        #                                   device_ids=[local_gpu_id],
-        #                                   broadcast_buffers=False,
-        #                                   find_unused_parameters=False,
-        #                                   )
-        relation_embed = DistributedDataParallel(relation_embed.cuda(local_gpu_id), 
-                                    device_ids=[local_gpu_id],
+        relation_embed = DistributedDataParallel(relation_embed.cuda(args.local_rank), 
+                                    device_ids=[args.local_rank],
                                     broadcast_buffers=False,
                                     find_unused_parameters=False
                                     )
@@ -220,12 +215,10 @@ def main(args):
 
     else:
         net = net.to(device)
-        # seg_net = seg_net.to(device)
         matcher = matcher.to(device)
         relation_embed = relation_embed.to(device)
-    seg_net = None
-    print(relation_embed)
-    loss = SetCriterion(config, matcher, relation_embed, distributed=args.distributed)
+
+    loss = SetCriterion(config, matcher, relation_embed, distributed=args.distributed) # .cuda(args.local_rank)
 
 
     ### Setting optimizer
@@ -259,10 +252,6 @@ def main(args):
         scheduler.load_state_dict(checkpoint['scheduler'])
         last_epoch = scheduler.last_epoch
         scheduler.step_size = config.TRAIN.LR_DROP
-        
-    # if args.seg_net:
-    #     checkpoint = torch.load(args.seg_net, map_location='cpu')
-    #     seg_net.load_state_dict(checkpoint['net'])
 
     writer = SummaryWriter(
         log_dir=os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED)),
@@ -302,31 +291,12 @@ def main(args):
 
     pbar = ProgressBar()
     pbar.attach(trainer, output_transform= lambda x: {'loss': x["loss"]["total"]})
-    # logging.basicConfig(stream=sys.stdout, level=logging.INFO)
-    # if args.distributed:
-    #     if torch.distributed.get_rank()==0:
-    #         pbar = ProgressBar()
-    #         if args.eval:
-    #             pbar.attach(evaluator)
-    #         else:
-    #             pbar.attach(trainer, output_transform= lambda x: {'loss': x["loss"]["total"]})
-    # else:
-    #     pbar = ProgressBar()
-    #     pbar.attach(trainer, output_transform= lambda x: {'loss': x["loss"]["total"]})
-
     trainer.run()
 
     if args.distributed:
         torch.distributed.destroy_process_group()
 
-
-
-
 if __name__ == '__main__':
     args = parse_args()
-    # args.world_size = len(args.gpu_ids)
-    # args.num_workers = len(args.gpu_ids) * 4
-    
     torch.multiprocessing.set_sharing_strategy('file_system')
-    
     main(args)
