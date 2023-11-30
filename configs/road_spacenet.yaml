@@ -2,9 +2,10 @@ DATA:
   DIM: 2                  # data dimension
   BATCH_SIZE: 32 #16
   TEST_BATCH_SIZE: 128 #16
-  DATA_PATH: './data/20cities/train_data/'        # Path to dataset, could be overwritten by command line argument
-  TEST_DATA_PATH: './data/20cities/test_data_128/'
-  DATASET: 'US20-road-network-2D'     # Dataset name
+  DATA_PATH: './data/spacenet3/train_data_128/'        # Path to dataset, could be overwritten by command line argument
+  TEST_DATA_PATH: './data/spacenet3/test_data_128/'
+  VAL_DATA_PATH: './data/spacenet3/test_data_128/'
+  DATASET: 'spacenet3'     # Dataset name
   IMG_SIZE: [128, 128]    # Input image size
   NUM_WORKERS: 4          # Number of data loading threads
   SEED: 10                # random seed for reproducibility
@@ -17,7 +18,7 @@ MODEL:
     NAME: deformable_transformer_backbone
     HIDDEN_DIM: 512 #128 #256 #768
     POSITION_EMBEDDING: sine
-    LR_BACKBONE: 2e-5 # if > 0, True, or False
+    LR_BACKBONE: 2e-5
     NUM_FEATURE_LEVELS: 4
     BACKBONE: resnet101
     MASKS: False
@@ -64,7 +65,7 @@ TRAIN:
   LR_DROP: 80
   CLIP_MAX_NORM: 0.1  # hardcoded
 
-  SAVE_PATH: "./work_dirs/road_rgb_2D/"          # save path for the checkpoint, log and val results
+  SAVE_PATH: "./work_dirs/road_spacenet"          # save path for the checkpoint, log and val results
   VAL_INTERVAL: 5                  # validation interval
   SAVE_VAL: False                   # save validation data
 
@@ -78,5 +79,5 @@ TRAIN:
 
 
 log:
-  exp_name: 'baseline_road_resnet_def_detr_final_dec_4'
-  message: "Baseline 2D relationformer for 2D sat network"
+  exp_name: 'baseline_road_resnet_def_detr_final_dec_4_spacenet3'
+  message: "Baseline 2D relationformer for spacenet3"
