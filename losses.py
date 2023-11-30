@@ -59,7 +59,7 @@ class SetCriterion(nn.Module):
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
 
-    def __init__(self, config, matcher, relation_embed, distributed):
+    def __init__(self, config, matcher, net, distributed):
         """ Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -70,7 +70,8 @@ class SetCriterion(nn.Module):
         """
         super().__init__()
         self.matcher = matcher
-        self.relation_embed = relation_embed
+        # self.relation_embed = relation_embed
+        self.net = net
         self.distributed = distributed
         self.rln_token = config.MODEL.DECODER.RLN_TOKEN
         self.obj_token = config.MODEL.DECODER.OBJ_TOKEN
@@ -99,11 +100,10 @@ class SetCriterion(nn.Module):
         # num_nodes = targets.sum()
         # # loss = F.cross_entropy(outputs.permute(0,2,1), targets, weight=weight, reduction='mean')
         # loss = sigmoid_focal_loss(outputs, targets, num_nodes)
-        
+
         targets = torch.zeros(outputs[...,0].shape, dtype=torch.long).to(outputs.get_device())
         targets[idx] = 1.0
         loss = F.cross_entropy(outputs.permute(0,2,1), targets, weight=weight, reduction='mean')
-        
         # cls_acc = 100 - accuracy(outputs, targets_one_hot)[0]
         return loss
     
@@ -196,7 +196,6 @@ class SetCriterion(nn.Module):
             full_adj[pos_edge[:,0],pos_edge[:,1]]=0
             full_adj[pos_edge[:,1],pos_edge[:,0]]=0
             neg_edges = torch.nonzero(torch.triu(full_adj))
-
             # shuffle edges for undirected edge
             shuffle = np.random.randn((pos_edge.shape[0]))>0
             to_shuffle = pos_edge[shuffle,:]
@@ -215,7 +214,7 @@ class SetCriterion(nn.Module):
             shuffle = np.random.randn((neg_edges.shape[0]))>0
             to_shuffle = neg_edges[shuffle,:]
             neg_edges[shuffle,:] = to_shuffle[:,[1, 0]]
-            
+
             # check whether the number of -ve edges are within limit 
             if num_edges-pos_edge.shape[0]<neg_edges.shape[0]:
                 take_neg = num_edges-pos_edge.shape[0]
@@ -227,32 +226,27 @@ class SetCriterion(nn.Module):
             # all_edges.append(all_edges_)
             edge_labels.append(torch.cat((torch.ones(pos_edge.shape[0], dtype=torch.long), torch.zeros(take_neg, dtype=torch.long)), 0))
 
-            # concatenate object token pairs with relation token
             if self.rln_token > 0:
                 relation_feature.append(torch.cat((rearranged_object_token[all_edges_[:,0],:],rearranged_object_token[all_edges_[:,1],:],relation_token[batch_id,...].repeat(total_edge,1)), 1))
             else:
                 relation_feature.append(torch.cat((rearranged_object_token[all_edges_[:,0],:],rearranged_object_token[all_edges_[:,1],:]), 1))
 
         # [print(e,l) for e,l in zip(all_edges, edge_labels)]
-
         # torch.tensor(list(itertools.combinations(range(n.shape[0]), 2))).to(e.get_device())
         relation_feature = torch.cat(relation_feature, 0)
         edge_labels = torch.cat(edge_labels, 0).to(h.get_device())
 
-        # if self.distributed:
-        #     relation_pred = self.net.module.relation_embed(relation_feature)
-        # else: # for single gpu usage
-        #     relation_pred = self.net.relation_embed(relation_feature)
+        if self.distributed:
+            relation_pred = self.net.module.relation_embed(relation_feature)
+        else: # for single gpu usage
+            relation_pred = self.net.relation_embed(relation_feature)
 
-        relation_pred = self.relation_embed(relation_feature)
+        # relation_pred = self.relation_embed(relation_feature)
 
         # valid_edges = torch.argmax(relation_pred, -1)
         # print('valid_edge number', valid_edges.sum())
-
         loss = F.cross_entropy(relation_pred, edge_labels, reduction='mean')
-        # except Exception as e:
-        #     print(e)
-        #     pdb.set_trace()
+
 
         return loss
 

@@ -49,10 +49,10 @@ class RelationFormer(nn.Module):
         self.class_embed = nn.Linear(config.MODEL.DECODER.HIDDEN_DIM, 2)
         self.bbox_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM, config.MODEL.DECODER.HIDDEN_DIM, 4, 3)
         
-        # if config.MODEL.DECODER.RLN_TOKEN > 0:
-        #     self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*3, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
-        # else:
-        #     self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*2, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
+        if config.MODEL.DECODER.RLN_TOKEN > 0:
+            self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*3, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
+        else:
+            self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*2, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
 
         if not self.two_stage:
             self.query_embed = nn.Embedding(self.num_queries, self.hidden_dim*2)    # why *2
@@ -89,7 +89,7 @@ class RelationFormer(nn.Module):
             samples = nested_tensor_from_tensor_list([tensor.expand(3, -1, -1).contiguous() for tensor in samples])
         # Deformable Transformer backbone
         features, pos = self.encoder(samples)
-        
+
         # Create 
         srcs = []
         masks = []
@@ -122,6 +122,8 @@ class RelationFormer(nn.Module):
         )
 
         object_token = hs[...,:self.obj_token,:]
+        # hs = hs + torch.zeros((1, 2), device=hs.device) * self.relation_embed(torch.zeros((1, 1536), device=hs.device))
+        hs = hs + torch.mm(self.relation_embed(torch.zeros((1, 1536), device=hs.device)), torch.zeros((2,1), device=hs.device))
 
         class_prob = self.class_embed(object_token)
         coord_loc = self.bbox_embed(object_token).sigmoid()
