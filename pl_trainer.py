@@ -5,7 +5,7 @@ import torch
 
 from inference import relation_infer
 
-
+# 한 에폭에 모든 배치 트레인하는 함수
 def train_epoch(model,
                 relation_embed,
                 data_loader, 
@@ -23,25 +23,27 @@ def train_epoch(model,
     total_loss = 0
     with tqdm(data_loader, unit="batch") as tepoch:
         max_iter_in_epoch = len(tepoch)
-        for idx, batch in enumerate(tepoch):
+        for idx, batch in enumerate(tepoch): # 모든 배치
             tepoch.set_description(f"Epoch {epoch}")
-            images, seg, nodes, edges = batch
+            images, seg, nodes, edges = batch # 한 배치에서 데이터 꺼내기
 
-            images = images.to(device)
+            images = images.to(device) # 데이터 쿠다로
             seg = seg.to(device)
             nodes = [node.to(device) for node in nodes]
             edges = [edge.to(device) for edge in edges]
 
-            optimizer.zero_grad()
+            # Forward pass
             h, out, srcs = model(images)
-            losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges})
+            # Backward pass
+            optimizer.zero_grad() # 그래디언트 초기화
+            losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges}) # loss 값 계산
             loss = losses['total']
 
-            loss.backward()
-            optimizer.step()
+            loss.backward() # 그래디언트 계산
+            optimizer.step() # 파라미터 업데이트
 
-            total_loss += loss.item()
-            if is_master:
+            total_loss += loss.item() # 모든 배치에 4가지 loss 누적 합
+            if is_master: # loss 로그 기록
                 iters = max_iter_in_epoch * epoch + idx
                 writer.add_scalar('Train/Loss', loss.item(), iters)
                 writer.add_scalar('Train/Loss/class', losses['class'].item(), iters)
