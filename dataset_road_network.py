@@ -13,21 +13,21 @@ import pyvista
 from torch.utils.data import Dataset
 from scipy.sparse import csr_matrix
 import torchvision.transforms.functional as tvf
+from albumentation_aug import AlbumentationsAugmentation
 
-# train_transform = Compose(
-#     [
-#         Flip,
-#         Rotate90,
-#         ToTensor,
+
+# train_transform = [
+#         dict(type='HorizontalFlip', p=0.5),
+#         dict(type='RandomShadow', p=0.3),
+#         dict(type='RandomFog', p=0.3),
+#         dict(type='CLAHE', p=0.3),
+#         dict(type='RandomGamma', p=0.3),
+#         dict(type='ColorJitter', brightness=0.2, contrast=0, saturation=0, p=0.3),
+#         dict(type='ColorJitter', brightness=0, contrast=0.2, saturation=0, p=0.3),
+#         dict(type='ColorJitter', brightness=0, contrast=0, saturation=0.2, p=0.3),
 #     ]
-# )
-train_transform = []
-# val_transform = Compose(
-#     [
-#         ToTensor,
-#     ]
-# )
-val_transform = []
+# val_transform = []
+
 
 class Sat2GraphDataLoader(Dataset):
     """[summary]
@@ -44,6 +44,7 @@ class Sat2GraphDataLoader(Dataset):
         """
         self.data = data
         self.transform = transform
+        self.albumentation_transform = AlbumentationsAugmentation(self.transform)
 
         self.mean = [0.485, 0.456, 0.406]
         self.std = [0.229, 0.224, 0.225]
@@ -67,6 +68,8 @@ class Sat2GraphDataLoader(Dataset):
         """
         data = self.data[idx]
         image_data = imageio.imread(data['img'])
+        image_data = self.albumentation_transform(image_data)
+
         image_data = torch.tensor(image_data, dtype=torch.float).permute(2,0,1)
         image_data = image_data/255.0
         vtk_data = pyvista.read(data['vtp'])
@@ -97,6 +100,22 @@ def build_road_network_data(config, mode="train", split=0.95, loadXYN=False):
     Returns:
         [type]: [description]
     """
+    # Augmentations
+    if config.DATA.AUGMENTATIONS:
+        train_transform = [
+            # dict(type='RandomShadow', p=0.3),
+            # dict(type='RandomFog', p=0.3),
+            # dict(type='RandomGamma', p=0.3),
+            dict(type='ColorJitter', brightness=0.2, contrast=0, saturation=0, p=0.3),
+            dict(type='ColorJitter', brightness=0, contrast=0.2, saturation=0, p=0.3),
+            dict(type='ColorJitter', brightness=0, contrast=0, saturation=0.2, p=0.3),
+            dict(type='CLAHE', p=0.3),
+        ]
+    else:
+        train_transform = []
+
+    print("train augmentations:", train_transform)
+    val_transform = []
     if mode == "train":
         img_folder = os.path.join(config.DATA.DATA_PATH, "raw")
         seg_folder = os.path.join(config.DATA.DATA_PATH, "seg")
