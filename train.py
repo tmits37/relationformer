@@ -1,19 +1,12 @@
 import os
 import yaml
-import sys
 import json
 import argparse
-import numpy as np
 
-import logging
-import ignite
 import torch
 import torch.nn as nn
-# from monai.data import DataLoader
 from torch.utils.data import DataLoader
 from dataset_road_network import build_road_network_data
-from evaluator import build_evaluator
-from trainer import build_trainer
 from models import build_model
 from models.relationformer_2D import build_relation_embed
 from utils import image_graph_collate_road_network
@@ -23,10 +16,11 @@ from torch.nn.parallel import DistributedDataParallel
 from models.matcher import build_matcher
 
 from losses import SetCriterion
-from ignite.contrib.handlers.tqdm_logger import ProgressBar
 import torch.multiprocessing
 
-# os.environ['TORCH_DISTRIBUTED_DEBUG']='DETAIL'
+from trainer import train_epoch, validate_epoch, save_checkpoint
+os.environ['TORCH_DISTRIBUTED_DEBUG']='DETAIL'
+os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -64,6 +58,7 @@ def init_for_distributed(args):
         args.world_size = int(os.environ['WORLD_SIZE'])
         args.local_rank = int(os.environ['LOCAL_RANK'])
         args.distributed = True
+        os.environ['TORCH_DISTRIBUTED_DEBUG']='DETAIL'
     elif 'SLURM_PROCID' in os.environ:
         args.rank = int(os.environ['SLURM_PROCID'])
         args.local_rank = args.rank % torch.cuda.device_count()
@@ -81,7 +76,7 @@ def init_for_distributed(args):
     #     print("Use GPU: {} for training".format(local_gpu_id))
 
     torch.cuda.set_device(args.local_rank)
-    args.dist_backend = 'gloo' # nvcc
+    args.dist_backend = 'nccl' # nvcc
     print('| distributed init (rank {}): {}'.format(
         args.rank, 'env://'), flush=True)
     torch.distributed.init_process_group(backend=args.dist_backend, 
@@ -89,7 +84,7 @@ def init_for_distributed(args):
                                          world_size=args.world_size, 
                                          rank=args.rank)
     torch.distributed.barrier()
-    setup_for_distributed(args.rank == 0)
+    # setup_for_distributed(args.rank == 0)
     return None
 
 
@@ -151,8 +146,10 @@ def main(args):
     torch.multiprocessing.set_sharing_strategy('file_system')
     # device = torch.device("cuda") if args.device=='cuda' else torch.device("cpu")
 
-    init_for_distributed(args)
     # gpu 2개 사용할 경우, world_size = 2, rank = 0 and 1 으로 두번 실행되는것을 관찰할 수 있다.
+    init_for_distributed(args)
+
+    # 근데 이 라인은 1번만 실행된다.
     print(args.rank, args.local_rank)
 
     device = torch.device(args.device)
@@ -195,7 +192,7 @@ def main(args):
     ### Setting the model
     net = build_model(config) # .to(device)
     matcher = build_matcher(config)
-    relation_embed = build_relation_embed(config)
+    # relation_embed = build_relation_embed(config)
 
     if args.distributed:
         device = torch.device(f"cuda:{args.rank}")
@@ -205,20 +202,16 @@ def main(args):
                                       broadcast_buffers=False,
                                       find_unused_parameters=True
                                       )
-        relation_embed = DistributedDataParallel(relation_embed.cuda(args.local_rank), 
-                                    device_ids=[args.local_rank],
-                                    broadcast_buffers=False,
-                                    find_unused_parameters=False
-                                    )
-        # matcher = DistributedDataParallel(matcher.cuda(local_gpu_id), device_ids=[local_gpu_id])
-        # matcher = matcher.to(device)
-
     else:
         net = net.to(device)
         matcher = matcher.to(device)
-        relation_embed = relation_embed.to(device)
 
-    loss = SetCriterion(config, matcher, relation_embed, distributed=args.distributed) # .cuda(args.local_rank)
+    if args.distributed:
+        relation_embed = net.module.relation_embed
+    else:
+        relation_embed = net.relation_embed
+
+    loss = SetCriterion(config, matcher, net, distributed=args.distributed).cuda(args.local_rank)
 
 
     ### Setting optimizer
@@ -253,48 +246,62 @@ def main(args):
         last_epoch = scheduler.last_epoch
         scheduler.step_size = config.TRAIN.LR_DROP
 
+
+    print("Check local rank or not")
+    print("=======================")
+    print(args.local_rank)
+
+    if args.local_rank == 0:
+        is_master = True
+    else:
+        is_master = False
+
+
     writer = SummaryWriter(
         log_dir=os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED)),
-    )
+    ) if is_master else None
 
-    evaluator = build_evaluator(
-        val_loader,
-        net, 
-        relation_embed,
-        optimizer,
-        scheduler,
-        writer,
-        config,
-        device,
-        distributed=args.distributed,
-        local_rank=args.rank,
-    )
-    trainer = build_trainer(
-        train_loader,
-        net,
-        relation_embed,
-        loss,
-        optimizer,
-        scheduler,
-        writer,
-        evaluator,
-        config,
-        device,
-        distributed=args.distributed,
-        local_rank=args.rank,
-    )
+    n_epochs = config.TRAIN.EPOCHS
+    for epoch in range(1, n_epochs+1):
+        train_loss = train_epoch(
+            net,
+            relation_embed,
+            train_loader, 
+            loss_fn=loss, 
+            optimizer=optimizer, 
+            device=device, 
+            epoch=epoch, 
+            writer=writer, 
+            is_master=is_master)
+        if is_master:
+            print(f"Epoch {epoch}, Training Loss: {train_loss}")
 
-    if args.resume:
-        evaluator.state.epoch = last_epoch
-        trainer.state.epoch = last_epoch
-        trainer.state.iteration = trainer.state.epoch_length * last_epoch
+        if is_master and (epoch % config.TRAIN.VAL_INTERVAL == 0):
+            validate_epoch(
+                net, 
+                relation_embed,
+                config,
+                val_loader, 
+                loss_fn=loss, 
+                device=device, 
+                epoch=epoch, 
+                writer=writer, 
+                is_master=is_master)
+            save_checkpoint(
+                net, 
+                relation_embed,
+                optimizer,
+                epoch, 
+                config)
 
-    pbar = ProgressBar()
-    pbar.attach(trainer, output_transform= lambda x: {'loss': x["loss"]["total"]})
-    trainer.run()
+    if is_master and writer:
+        writer.close()
 
-    if args.distributed:
-        torch.distributed.destroy_process_group()
+
+    # Do I need this line?
+    # if args.distributed:
+    #     torch.distributed.destroy_process_group()
+
 
 if __name__ == '__main__':
     args = parse_args()

@@ -39,7 +39,7 @@ def to_img_and_seg_from_results(filelist, rootdir, image_size=(2048, 2048), patc
     return tot_seg, tot_img
 
 
-def to_graph_from_results(tot_img, filelist, rootdir, patch_size=(128,128)):
+def to_graph_from_results(tot_img, filelist, rootdir, patch_size=(128,128), option='pred', single_patch=False):
     blank_image = tot_img.copy()
     for filename in filelist:
         with open(os.path.join(rootdir, 'graph', filename)) as f:
@@ -47,12 +47,14 @@ def to_graph_from_results(tot_img, filelist, rootdir, patch_size=(128,128)):
 
         # if filename == 'data.json':
         #     continue
+        if single_patch:
+            blank_image = tot_img.copy()
 
         x0 = int(filename.split('_')[1])
         y0 = int(filename.split('_')[2])
 
-        nodes = data['pred_node']
-        edges = data['pred_edge']
+        nodes = data[f'{option}_node']
+        edges = data[f'{option}_edge']
 
         for edge in edges:
             node1 = scale_coordinates(nodes[edge[0]], patch_size, x0, y0)
@@ -62,6 +64,17 @@ def to_graph_from_results(tot_img, filelist, rootdir, patch_size=(128,128)):
         for node in nodes:
             scaled_node = scale_coordinates(node, patch_size, x0, y0)
             cv2.circle(blank_image, scaled_node[::-1], 5, (0, 0, 255), -1) 
+
+        #  save
+        if single_patch:
+            os.makedirs(os.path.join(rootdir, 'inference_plt', 'single_patch'), exist_ok=True)
+            blank_image = blank_image.astype('uint8')
+            fig, ax = plt.subplots(1, 1, figsize=(9,9))
+            # fig, ax = plt.subplots(2, 1, figsize=(18,36))
+            ax.imshow(blank_image[x0:x0+patch_size[0], y0:y0+patch_size[0]])
+            savename = os.path.join(rootdir, 'inference_plt', 'single_patch', f'{region_num}_{x0}_{y0}_result.png')
+            plt.savefig(savename, dpi=200, facecolor='#eeeeee')
+
 
     blank_image = blank_image.astype('uint8')
     return blank_image
@@ -73,6 +86,8 @@ def parse_args():
     parser.add_argument('--show-dir', type=str, required=True, help='savedir')
     parser.add_argument('--dataset', type=str, choices=['sat2graph', 'spacenet'],
                         default='sat2graph', help='define dataset')
+    parser.add_argument('--patch-size', type=int, default=128)
+    parser.add_argument('--single-patch', action='store_true')
     args = parser.parse_args()
     return args
 
@@ -88,41 +103,41 @@ if __name__ == "__main__":
     if args.dataset == 'sat2graph':
         # region_num_list = ['05JUL15WV031100015JUL05162954']
         image_size = (2048, 2048)
-        patch_size = (128, 128)
+        patch_size = (args.patch_size, args.patch_size)
         region_num_list = [8,9,19,28,29,39,48,49,59,68,69,79,88,89,99,108,109,119,128,129,139,148,149,159,168,169,179]
     elif args.dataset == 'spacenet':
         with open("/nas/k8s/dev/research/doyoungi/git/relationformer/data/spacenet3/data_split.json", "r") as file:
             split_info = json.load(file)
         image_size = (400, 400)
-        patch_size = (128, 128)
+        patch_size = (args.patch_size, args.patch_size)
         region_num_list = ['-'.join(x.split('_')[1:]) for x in split_info['test']]
     else:
         raise AttributeError
 
     os.makedirs(os.path.join(rootdir, 'inference_plt'), exist_ok=True)
     for region_num in tqdm(region_num_list):
-        # print(region_num)
         tmp = []
         for a in filelist_p:
             if str(a.split('.')[0].split('_')[-1]) == str(region_num):
-            # if a.split('.')[0].split('_')[-1] == region_num: # test-single
                 tmp.append(a)
 
         filelist_p_region = tmp
         tmp = []
         for b in filelist_g:
             if str(b.split('.')[0].split('_')[-1]) == str(region_num):
-            # if b.split('.')[0].split('_')[-1] == region_num: # test-single
                 tmp.append(b)
                 
         filelist_g_region = tmp
 
         tot_seg, tot_img = to_img_and_seg_from_results(filelist_p_region, rootdir, image_size, patch_size)
-        tot_graph = to_graph_from_results(tot_img, filelist_g_region, rootdir, patch_size)
+        tot_graph = to_graph_from_results(tot_img, filelist_g_region, rootdir, patch_size, option='pred', single_patch=args.single_patch)
 
-        fig, ax = plt.subplots(1, 2, figsize=(18,9))
-        # fig, ax = plt.subplots(2, 1, figsize=(18,36))
-        ax[0].imshow(tot_graph)
-        ax[1].imshow(tot_seg)
-        savename = os.path.join(rootdir, 'inference_plt', f'{region_num}_result.png')
-        plt.savefig(savename, dpi=200, facecolor='#eeeeee')
+        if not args.single_patch:
+            gt_tot_graph = to_graph_from_results(tot_img, filelist_g_region, rootdir, patch_size, option='gt', single_patch=False)
+
+            fig, ax = plt.subplots(1, 2, figsize=(18,9))
+            # fig, ax = plt.subplots(2, 1, figsize=(18,36))
+            ax[0].imshow(tot_graph)
+            ax[1].imshow(gt_tot_graph)
+            savename = os.path.join(rootdir, 'inference_plt', f'{region_num}_result.png')
+            plt.savefig(savename, dpi=200, facecolor='#eeeeee')

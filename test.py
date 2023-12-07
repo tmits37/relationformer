@@ -2,14 +2,29 @@ import os
 import yaml
 import json
 from argparse import ArgumentParser
-# import pdb
+
+import torch
+from torch.utils.data import DataLoader
+from tqdm import tqdm
 import numpy as np
+
+from dataset_road_network import build_road_network_data
+from models import build_model
+from inference import relation_infer
+# from metric_smd import StreetMoverDistance
+from metric_map import BBoxEvaluator
+from box_ops_2D import box_cxcywh_to_xyxy_np
+from utils import image_graph_collate_road_network
+from metrics.topo import compute_topo
+
+
+
 parser = ArgumentParser()
-parser.add_argument('--config',
+parser.add_argument('config',
                     default=None,
                     help='config file (.yml) containing the hyper-parameters for training. '
                          'If None, use the nnU-Net config. See /config for examples.')
-parser.add_argument('--checkpoint', default=None, help='checkpoint of the model to test.')
+parser.add_argument('checkpoint', default=None, help='checkpoint of the model to test.')
 parser.add_argument('--device', default='cuda',
                         help='device to use for training')
 parser.add_argument('--cuda_visible_device', nargs='*', type=int, default=[0,1],
@@ -53,20 +68,6 @@ def test(args):
     config = dict2obj(config)
     os.environ["CUDA_VISIBLE_DEVICES"] = ','.join(map(str, args.cuda_visible_device))
 
-    import torch
-    from monai.data import DataLoader
-    from tqdm import tqdm
-    import numpy as np
-
-    from dataset_road_network import build_road_network_data
-    from models import build_model
-    from inference import relation_infer
-    from metric_smd import StreetMoverDistance
-    from metric_map import BBoxEvaluator
-    from box_ops_2D import box_cxcywh_to_xyxy_np
-    from utils import image_graph_collate_road_network
-    from metrics.topo import compute_topo
-
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.enabled = True
     torch.multiprocessing.set_sharing_strategy('file_system')
@@ -92,8 +93,8 @@ def test(args):
 
     # init metric
     # metric = StreetMoverDistance(eps=1e-7, max_iter=100, reduction=MetricReduction.MEAN)
-    metric_smd = StreetMoverDistance(eps=1e-5, max_iter=10, reduction='none')
-    smd_results = []
+    # metric_smd = StreetMoverDistance(eps=1e-5, max_iter=10, reduction='none')
+    # smd_results = []
 
     metric_node_map = BBoxEvaluator(['node'], max_detections=100)
     metric_edge_map = BBoxEvaluator(['edge'], max_detections=100)
@@ -117,8 +118,8 @@ def test(args):
             )
 
             # Add smd of current batch elem
-            ret = metric_smd(nodes, edges, pred_nodes, pred_edges)
-            smd_results += ret.tolist()
+            # ret = metric_smd(nodes, edges, pred_nodes, pred_edges)
+            # smd_results += ret.tolist()
 
             # Add elements of current batch elem to node map evaluator
             metric_node_map.add(
@@ -156,9 +157,9 @@ def test(args):
     topo_array=np.array(topo_results)
     print(topo_array.mean(0))
     # Determine smd
-    smd_mean = torch.tensor(smd_results).mean().item()
-    smd_std = torch.tensor(smd_results).std().item()
-    print(f'smd value: mean {smd_mean}, std {smd_std}\n')
+    # smd_mean = torch.tensor(smd_results).mean().item()
+    # smd_std = torch.tensor(smd_results).std().item()
+    # print(f'smd value: mean {smd_mean}, std {smd_std}\n')
 
     # Determine node box ap / ar
     node_metric_scores = metric_node_map.eval()
