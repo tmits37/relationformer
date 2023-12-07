@@ -1,148 +1,142 @@
 import os
-from torch.nn.functional import interpolate
-from monai.engines import SupervisedTrainer
-from monai.inferers import SimpleInferer
-from monai.handlers import LrScheduleHandler, ValidationHandler, StatsHandler, TensorBoardStatsHandler, CheckpointSaver, MeanDice
-from monai.transforms import (
-    Compose,
-    AsDiscreted,
-)
-import torch.nn.functional as F
+from tqdm import tqdm
+
 import torch
-from torch.nn.utils import clip_grad_norm
+
 from inference import relation_infer
-import gc
-
-from utils import get_total_grad_norm
-
-# define customized trainer
-class RelationformerTrainer(SupervisedTrainer):
-
-    def _iteration(self, engine, batchdata):
-        images, seg, nodes, edges = batchdata[0], batchdata[1], batchdata[2], batchdata[3]
-        # inputs, targets = self.get_batch(batchdata, image_keys=IMAGE_KEYS, label_keys="label")
-        # inputs = torch.cat(inputs, 1)
-
-        images = images.to(engine.state.device,  non_blocking=False)
-        seg = seg.to(engine.state.device,  non_blocking=False)
-        nodes = [node.to(engine.state.device,  non_blocking=False) for node in nodes]
-        edges = [edge.to(engine.state.device,  non_blocking=False) for edge in edges]
-        target = {'nodes': nodes, 'edges': edges}
-
-        self.network[0].train()
-        self.network[1].train()
-        self.optimizer.zero_grad()
-        
-        h, out, srcs = self.network[0](images, seg=False)
-        losses = self.loss_function(h, out, target)
-        losses['total'].backward()
-
-        self.optimizer.step()
-        
-        gc.collect()
-        torch.cuda.empty_cache()
-
-        return {"images": images, "points": nodes, "edges": edges, "loss": losses}
 
 
-def build_trainer(train_loader, net, relation_embed, loss, optimizer, scheduler, writer,
-                  evaluator, config, device, fp16=False, distributed=False, local_rank=0):
-    """[summary]
+def train_epoch(model,
+                relation_embed,
+                data_loader, 
+                loss_fn, 
+                optimizer, 
+                device, 
+                epoch, 
+                writer, 
+                is_master
+                ):
+
+    model.train()
+
+
+    total_loss = 0
+    with tqdm(data_loader, unit="batch") as tepoch:
+        max_iter_in_epoch = len(tepoch)
+        for idx, batch in enumerate(tepoch):
+            tepoch.set_description(f"Epoch {epoch}")
+            images, seg, nodes, edges = batch
+
+            images = images.to(device)
+            seg = seg.to(device)
+            nodes = [node.to(device) for node in nodes]
+            edges = [edge.to(device) for edge in edges]
+
+            optimizer.zero_grad()
+            h, out, srcs = model(images)
+            losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges})
+            loss = losses['total']
+
+            loss.backward()
+            optimizer.step()
+
+            total_loss += loss.item()
+            if is_master:
+                iters = max_iter_in_epoch * epoch + idx
+                writer.add_scalar('Train/Loss', loss.item(), iters)
+                writer.add_scalar('Train/Loss/class', losses['class'].item(), iters)
+                writer.add_scalar('Train/Loss/nodes', losses['nodes'].item(), iters)
+                writer.add_scalar('Train/Loss/boxes', losses['boxes'].item(), iters)
+                writer.add_scalar('Train/Loss/edges', losses['edges'].item(), iters)
+            
+            tepoch.set_postfix(loss=loss.item())
+
+
+    return total_loss / len(data_loader)
+
+
+def validate_epoch(
+    model, 
+    relation_embed,
+    config,
+    data_loader, 
+    loss_fn, 
+    device, 
+    epoch, 
+    writer, 
+    is_master):
+
+    model.eval()
+    # relation_embed.eval()
+
+    total_loss = 0
+    with tqdm(data_loader, unit="batch") as tepoch:
+        max_iter_in_epoch = len(tepoch)
+        for idx, batch in enumerate(tepoch):
+            tepoch.set_description(f"Val: {epoch}")
+            images, _, nodes, edges = batch
+
+            images = images.to(device)
+            nodes = [node.to(device) for node in nodes]
+            edges = [edge.to(device) for edge in edges]
+
+            h, out, srcs = model(images)
+            pred_nodes, pred_edges = relation_infer(
+                h.detach(), 
+                out, 
+                relation_embed, 
+                config.MODEL.DECODER.OBJ_TOKEN, 
+                config.MODEL.DECODER.RLN_TOKEN
+            )
+            losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges})
+            loss = losses['total']
+            total_loss += loss.item()
+
+            if is_master:
+                iters = max_iter_in_epoch * epoch + idx
+                writer.add_scalar('Val/Loss', loss.item(), iters)
+                writer.add_scalar('Val/Loss/class', losses['class'].item(), iters)
+                writer.add_scalar('Val/Loss/nodes', losses['nodes'].item(), iters)
+                writer.add_scalar('Val/Loss/boxes', losses['boxes'].item(), iters)
+                writer.add_scalar('Val/Loss/edges', losses['edges'].item(), iters)
+
+            tepoch.set_postfix(loss=loss.item())
+
+    return total_loss / len(data_loader)
+
+
+def save_checkpoint(model, relation_embed, optimizer, epoch, config):
+    """
+    Save a checkpoint of the training process.
 
     Args:
-        train_loader ([type]): [description]
-        net ([type]): [description]
-        loss ([type]): [description]
-        optimizer ([type]): [description]
-        evaluator ([type]): [description]
-        scheduler ([type]): [description]
-        max_epochs ([type]): [description]
-        device ([type]): [description]
-
-    Returns:
-        [type]: [description]
+        model (torch.nn.Module): The model to save.
+        optimizer (torch.optim.Optimizer): The optimizer to save.
+        epoch (int): The current epoch number.
+        checkpoint_path (str): The file path to save the checkpoint.
     """
-    interation_interval = 10
-    train_handlers = [
-        LrScheduleHandler(
-            lr_scheduler=scheduler,
-            print_lr=True,
-            epoch_level=True,
-        ),
-        ValidationHandler(
-            validator=evaluator,
-            interval=config.TRAIN.VAL_INTERVAL,
-            epoch_level=True
-        ),
-        TensorBoardStatsHandler(
-            writer,
-            tag_name="classification_loss",
-            output_transform=lambda x: x["loss"]["class"],
-            global_epoch_transform=lambda x: scheduler.last_epoch,
-            iteration_interval=interation_interval,
-        ),
-        TensorBoardStatsHandler(
-            writer,
-            tag_name="node_loss",
-            output_transform=lambda x: x["loss"]["nodes"],
-            global_epoch_transform=lambda x: scheduler.last_epoch,
-            iteration_interval=interation_interval,
-        ),
-        TensorBoardStatsHandler(
-            writer,
-            tag_name="edge_loss",
-            output_transform=lambda x: x["loss"]["edges"],
-            global_epoch_transform=lambda x: scheduler.last_epoch,
-            iteration_interval=interation_interval,
-        ),
-        TensorBoardStatsHandler(
-            writer,
-            tag_name="box_loss",
-            output_transform=lambda x: x["loss"]["boxes"],
-            global_epoch_transform=lambda x: scheduler.last_epoch,
-            iteration_interval=interation_interval,
-        ),
-        TensorBoardStatsHandler(
-            writer,
-            tag_name="card_loss",
-            output_transform=lambda x: x["loss"]["cards"],
-            global_epoch_transform=lambda x: scheduler.last_epoch,
-            iteration_interval=interation_interval,
-        ),
-        TensorBoardStatsHandler(
-            writer,
-            tag_name="total_loss",
-            output_transform=lambda x: x["loss"]["total"],
-            global_epoch_transform=lambda x: scheduler.last_epoch,
-            iteration_interval=interation_interval,
-        )
-    ]
-    if local_rank == 0:
-        print('local_rank is zero pass')
-        train_handlers.extend(
-            [
-                StatsHandler(
-                    tag_name="train_loss",
-                    output_transform=lambda x: x["loss"]["total"]
-                ),
-        #         CheckpointSaver(
-        #             save_dir=os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED), 'models'),
-        #             save_dict={"net": net, "optimizer": optimizer, "scheduler": scheduler},
-        #             save_interval=1,
-        #             n_saved=1
-        #         ),
-            ]
-        )
+    # Prepare the checkpoint dictionary
+    checkpoint = {
+        'epoch': epoch,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict()
+    }
 
-    trainer = RelationformerTrainer(
-        device=device,
-        max_epochs=config.TRAIN.EPOCHS,
-        train_data_loader=train_loader,
-        network=[net, relation_embed],
-        optimizer=optimizer,
-        loss_function=loss,
-        inferer=SimpleInferer(),
-        train_handlers=train_handlers,
-    )
+    # relation_embed_checkpoint = {
+    #     'epoch': epoch,
+    #     'model_state_dict': relation_embed.state_dict(),
+    #     'optimizer_state_dict': optimizer.state_dict()
+    # }
 
-    return trainer
+    # If using DDP, save the original model wrapped inside DDP
+    if isinstance(model, torch.nn.parallel.DistributedDataParallel):
+        checkpoint['model_state_dict'] = model.module.state_dict()
+
+    savedir = os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED), 'models')
+    os.makedirs(savedir, exist_ok=True)
+    checkpoint_path = os.path.join(savedir, f'epochs_{epoch}.pth')
+    # relation_embed_checkpoint_path = os.path.join(savedir, f'relation_embed_epochs_{epoch}.pth')
+
+    # Save the checkpoint
+    torch.save(checkpoint, checkpoint_path)
+    # torch.save(relation_embed_checkpoint, relation_embed_checkpoint_path)
