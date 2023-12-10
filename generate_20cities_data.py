@@ -40,7 +40,7 @@ def generate_data_folder_spacenet3(root_dir, file_list, mode="train", dense=Fals
                 "vtk_file": vtk_file,
                 "idx": idx,
                 "dense": dense,
-                "dataset": 'spacenet3',
+                "dataset": 'spacenet',
                 "cfg_options": cfg_options,
             }
         )
