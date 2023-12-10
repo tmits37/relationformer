@@ -1,10 +1,10 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
-import itertools
-import pdb
 import box_ops_2D
 import numpy as np
+
+from mmseg.models import build_loss
 
 
 def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
@@ -70,18 +70,39 @@ class SetCriterion(nn.Module):
         """
         super().__init__()
         self.matcher = matcher
-        # self.relation_embed = relation_embed
         self.net = net
         self.distributed = distributed
         self.rln_token = config.MODEL.DECODER.RLN_TOKEN
         self.obj_token = config.MODEL.DECODER.OBJ_TOKEN
         self.losses = config.TRAIN.LOSSES
+        self.seg = config.MODEL.SEG
         self.weight_dict = {'boxes':config.TRAIN.W_BBOX,
                             'class':config.TRAIN.W_CLASS,
                             'cards':config.TRAIN.W_CARD,
                             'nodes':config.TRAIN.W_NODE,
                             'edges':config.TRAIN.W_EDGE,
                             }
+        if self.seg:
+            self.weight_dict['segs'] = 5.0
+            self.losses.append('segs')
+            print("You WILL calculate additional segmentation loss")
+            print(self.weight_dict)
+            # loss_cls_cfg = dict(
+            #     type='CrossEntropyLoss',
+            #     use_sigmoid=False,
+            #     loss_weight=1.0,
+            #     avg_non_ignore=False,
+            #     loss_name='loss_ce')
+            # self.ce_loss = build_loss(loss_cls_cfg)
+
+    def loss_segs(self, outputs, labels):
+        labels = labels.squeeze(1)
+        loss = F.cross_entropy(
+            outputs,
+            labels,
+            reduction='mean',
+            ignore_index=-100)
+        return loss
         
     def loss_class(self, outputs, indices):
         """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
@@ -279,7 +300,9 @@ class SetCriterion(nn.Module):
         losses['boxes'] = self.loss_boxes(out['pred_nodes'], target['nodes'], indices)
         losses['edges'] = self.loss_edges(h, target['nodes'], target['edges'], indices)
         losses['cards'] = self.loss_cardinality(out['pred_logits'], indices)
-        
+
+        if self.seg:
+            losses['segs'] = self.loss_segs(out['pred_segs'], target['segs'])
         losses['total'] = sum([losses[key]*self.weight_dict[key] for key in self.losses])
 
         return losses

@@ -14,6 +14,9 @@ from .deformable_detr_backbone import build_backbone
 from .deformable_detr_2D import build_deforamble_transformer
 from .utils import nested_tensor_from_tensor_list, NestedTensor, inverse_sigmoid
 
+from .fcn_head import NestedFCNHead
+
+
 class RelationEmbed(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -30,7 +33,10 @@ class RelationEmbed(nn.Module):
 class RelationFormer(nn.Module):
     """ This is the RelationFormer module that performs object detection """
 
-    def __init__(self, encoder, decoder, config):
+    def __init__(self, 
+                 encoder, 
+                 decoder,
+                 config):
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
@@ -80,14 +86,13 @@ class RelationFormer(nn.Module):
                 )])
 
         self.decoder.decoder.bbox_embed = None
+        self.seg = config.MODEL.SEG
+        if self.seg:
+            self.aux_fpn_head = NestedFCNHead(origin_shape=config.DATA.IMG_SIZE)
 
+    def forward(self, samples):
+        samples = nested_tensor_from_tensor_list([tensor.expand(3, -1, -1).contiguous() for tensor in samples])
 
-    def forward(self, samples, seg=True):
-        if not seg and not isinstance(samples, NestedTensor):
-            samples = nested_tensor_from_tensor_list(samples)
-        elif seg:
-            samples = nested_tensor_from_tensor_list([tensor.expand(3, -1, -1).contiguous() for tensor in samples])
-        # Deformable Transformer backbone
         features, pos = self.encoder(samples)
 
         # Create 
@@ -122,13 +127,18 @@ class RelationFormer(nn.Module):
         )
 
         object_token = hs[...,:self.obj_token,:]
-        # hs = hs + torch.zeros((1, 2), device=hs.device) * self.relation_embed(torch.zeros((1, 1536), device=hs.device))
         hs = hs + torch.mm(self.relation_embed(torch.zeros((1, 1536), device=hs.device)), torch.zeros((2,1), device=hs.device))
 
         class_prob = self.class_embed(object_token)
         coord_loc = self.bbox_embed(object_token).sigmoid()
-        
-        out = {'pred_logits': class_prob, 'pred_nodes': coord_loc}
+
+        # Auxiliary Head
+        if self.seg:
+            # torch.Size([256, 512, 16, 16]) torch.Size([256, 1024, 8, 8]) torch.Size([256, 2048, 4, 4])
+            seg_logits = self.aux_fpn_head(features)
+            out = {'pred_logits': class_prob, 'pred_nodes': coord_loc, 'pred_segs': seg_logits}
+        else:
+            out = {'pred_logits': class_prob, 'pred_nodes': coord_loc}
         return hs, out, srcs
 
 

@@ -34,7 +34,8 @@ def train_epoch(model,
 
             optimizer.zero_grad()
             h, out, srcs = model(images)
-            losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges})
+
+            losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges, 'segs':seg})
             loss = losses['total']
 
             loss.backward()
@@ -48,9 +49,16 @@ def train_epoch(model,
                 writer.add_scalar('Train/Loss/nodes', losses['nodes'].item(), iters)
                 writer.add_scalar('Train/Loss/boxes', losses['boxes'].item(), iters)
                 writer.add_scalar('Train/Loss/edges', losses['edges'].item(), iters)
+
+                if loss_fn.seg:
+                    writer.add_scalar('Train/Loss/segs', losses['segs'].item(), iters)
+
+            # for name, param in model.aux_fpn_head.named_parameters():
+            #     if param.requires_grad:
+            #         # print(param.grad)
+            #         writer.add_histogram(name + '_grad', param.grad, iters)
             
             tepoch.set_postfix(loss=loss.item())
-
 
     return total_loss / len(data_loader)
 
@@ -67,16 +75,16 @@ def validate_epoch(
     is_master):
 
     model.eval()
-    # relation_embed.eval()
 
     total_loss = 0
     with tqdm(data_loader, unit="batch") as tepoch:
         max_iter_in_epoch = len(tepoch)
         for idx, batch in enumerate(tepoch):
             tepoch.set_description(f"Val: {epoch}")
-            images, _, nodes, edges = batch
+            images, seg, nodes, edges = batch
 
             images = images.to(device)
+            seg = seg.to(device)
             nodes = [node.to(device) for node in nodes]
             edges = [edge.to(device) for edge in edges]
 
@@ -88,7 +96,7 @@ def validate_epoch(
                 config.MODEL.DECODER.OBJ_TOKEN, 
                 config.MODEL.DECODER.RLN_TOKEN
             )
-            losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges})
+            losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges, 'segs':seg})
             loss = losses['total']
             total_loss += loss.item()
 
@@ -100,6 +108,8 @@ def validate_epoch(
                 writer.add_scalar('Val/Loss/boxes', losses['boxes'].item(), iters)
                 writer.add_scalar('Val/Loss/edges', losses['edges'].item(), iters)
 
+                if loss_fn.seg:
+                    writer.add_scalar('Val/Loss/segs', losses['segs'].item(), iters)
             tepoch.set_postfix(loss=loss.item())
 
     return total_loss / len(data_loader)

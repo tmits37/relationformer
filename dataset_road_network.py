@@ -75,7 +75,7 @@ class Sat2GraphDataLoader(Dataset):
         vtk_data = pyvista.read(data['vtp'])
         seg_data = imageio.imread(data['seg'])
         seg_data = seg_data/np.max(seg_data)
-        seg_data = torch.tensor(seg_data, dtype=torch.int).unsqueeze(0)
+        seg_data = torch.tensor(seg_data, dtype=torch.long).unsqueeze(0)
 
         image_data = image_data.clone().detach().to(dtype=torch.float)
         image_data = tvf.normalize(
@@ -86,7 +86,7 @@ class Sat2GraphDataLoader(Dataset):
         coordinates = torch.tensor(np.float32(np.asarray(vtk_data.points)), dtype=torch.float)
         lines = torch.tensor(np.asarray(vtk_data.lines.reshape(-1, 3)), dtype=torch.int64)
 
-        return image_data, seg_data-0.5, coordinates[:,:2], lines[:,1:]
+        return image_data, seg_data, coordinates[:,:2], lines[:,1:]
 
 
 def build_road_network_data(config, mode="train", split=0.95, loadXYN=False):
