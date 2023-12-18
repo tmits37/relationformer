@@ -53,7 +53,7 @@ DATA:
 #     RLN_ATTN: True # only do comb RLN_ATTN True + RLN_TOKEN 0 and reverse
 
 TRAIN:
-  EPOCHS: 8
+  EPOCHS: 40
   LR: 1e-3 # TopDiG 논문에서 Inria 데이터 훈련 LR 설정값
   # LR_BACKBONE: 1e-4
   WEIGHT_DECAY: 1e-4
@@ -61,7 +61,7 @@ TRAIN:
   # CLIP_MAX_NORM: 0.1  # hardcoded
 
   SAVE_PATH: "./work_dirs/R2U_Net_pretrain/"          # save path for the checkpoint, log and val results
-  VAL_INTERVAL: 1                  # validation interval
+  VAL_INTERVAL: 4                  # validation interval
   SAVE_VAL: False                   # save validation data
 
   # loss weight
@@ -74,5 +74,5 @@ TRAIN:
 
 
 log:
-  exp_name: 'baseline_R2U_Net_pretrain_epoch8'
+  exp_name: 'baseline_R2U_Net_pretrain_epoch40'
   message: "Baseline TopDig-Node-Detector for road network"

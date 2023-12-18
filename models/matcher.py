@@ -55,7 +55,7 @@ class HungarianMatcher(nn.Module):
         tgt_ids = torch.cat([torch.tensor([1]*v.shape[0]).to(out_nodes.device) for v in targets['nodes']]) # [1]*551
         # v는 32개의 배치인데 하나마다 타겟 노드들 들고 있음
         # 즉 타겟 노드들은 1이라는 클래스를 주는 텐서를 만드는 과정. 값은 1만 갖고 있음 
-        cost_class = -outputs["pred_logits"].flatten(0, 1).softmax(-1)[..., tgt_ids] # 4096, 722(코스트)
+        cost_class = -outputs["pred_logits"].flatten(0, 1).softmax(-1)[..., tgt_ids] # 4096, 2 -> 4096, 722(코스트) 
         # 코스트가 1에 가까운지 비교하기 위해 로짓값을 소프트맥스해주고 타겟 551개에 대한 코스트 클래스 완성
 
         # Final cost matrix
