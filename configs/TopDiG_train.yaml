@@ -53,14 +53,14 @@ DATA:
 #     RLN_ATTN: True # only do comb RLN_ATTN True + RLN_TOKEN 0 and reverse
 
 TRAIN:
-  EPOCHS: 40
-  LR: 2e-4 # R2U-Net 논문 참고
-  # LR_BACKBONE: 1e-4
+  EPOCHS: 8
+  LR: 2e-4 # Loss 
+  LR_BACKBONE: 2e-4 # L_node
   WEIGHT_DECAY: 2e-5
   LR_DROP: 80
   # CLIP_MAX_NORM: 0.1  # hardcoded
 
-  SAVE_PATH: "./work_dirs/R2U_Net_pretrain/"          # save path for the checkpoint, log and val results
+  SAVE_PATH: "./work_dirs/TopDiG_train/"          # save path for the checkpoint, log and val results
   VAL_INTERVAL: 4                  # validation interval
   SAVE_VAL: False                   # save validation data
 
@@ -74,5 +74,5 @@ TRAIN:
 
 
 log:
-  exp_name: 'baseline_R2U_Net_pretrain_epoch40_lr2e-4'
-  message: "Baseline TopDig-Node-Detector for road network"
+  exp_name: 'baseline_TopDiG_train_epoch8'
+  message: "Baseline TopDig for Inria dataset"

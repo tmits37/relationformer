@@ -240,16 +240,16 @@ def main(args):
         param_dicts, weight_decay=float(config.TRAIN.WEIGHT_DECAY)
     )
 
-    # 논문에서 lr 스케줄러 안 쓴다고 함
-    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, config.TRAIN.LR_DROP)
+    # 논문에서 lr 스케줄러 안 쓴다고 함. 한번 사용해보기
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, config.TRAIN.LR_DROP)
     
     if args.resume:
         checkpoint = torch.load(args.resume, map_location='cpu')
         net.load_state_dict(checkpoint['net'])
         optimizer.load_state_dict(checkpoint['optimizer'])
-        # scheduler.load_state_dict(checkpoint['scheduler'])
-        # last_epoch = scheduler.last_epoch
-        # scheduler.step_size = config.TRAIN.LR_DROP
+        scheduler.load_state_dict(checkpoint['scheduler'])
+        last_epoch = scheduler.last_epoch
+        scheduler.step_size = config.TRAIN.LR_DROP
 
 
     print("Check local rank or not")

@@ -7,18 +7,17 @@ import argparse
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from dataset_road_network import build_road_network_data
-from models import build_model
-from utils import image_graph_collate_road_network
+from dataloader_cocostyle import CrowdAI, image_graph_collate_road_network_coco
+from models.backbone_R2U_Net import R2U_Net
+from models.DGS import HungarianMatcher
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel
-from models.matcher import build_matcher
 
-from losses import SetCriterion
+from losses_TopDiG import SetCriterion
 import torch.multiprocessing
 
-from trainer import train_epoch, validate_epoch, save_checkpoint
+from trainer_TopDiG import train_epoch, validate_epoch, save_checkpoint
 os.environ['TORCH_DISTRIBUTED_DEBUG']='DETAIL'
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
@@ -50,8 +49,6 @@ def parse_args():
 
 
 def init_for_distributed(args):
-
-
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
         print(os.environ['RANK'], os.environ['LOCAL_RANK'], os.environ['WORLD_SIZE'])
         args.rank = int(os.environ["RANK"])
@@ -62,7 +59,7 @@ def init_for_distributed(args):
     elif 'SLURM_PROCID' in os.environ:
         args.rank = int(os.environ['SLURM_PROCID'])
         args.local_rank = args.rank % torch.cuda.device_count()
-    else:
+    else: # --rank 디폴트 값(0)이면 else문 진행
         print('Not using distributed mode')
         args.distributed = False
         args.local_rank = 0
@@ -149,18 +146,16 @@ def main(args):
     # gpu 2개 사용할 경우, world_size = 2, rank = 0 and 1 으로 두번 실행되는것을 관찰할 수 있다.
     init_for_distributed(args)
 
-    # 근데 이 라인은 1번만 실행된다.
-    print(args.rank, args.local_rank)
-
     device = torch.device(args.device)
-    # if args.distributed:
-    #     args.rank = torch.distributed.get_rank()
-    #     device = torch.device(f"cuda:{args.rank}")
-    #     print(args.rank, device, args.local_rank) # 0, cuda:0, 0
-
 
     ### Setting the dataset
-    train_ds, val_ds = build_road_network_data(config, mode='split')
+    dataset = CrowdAI(
+        images_directory='/nas/tsgil/dataset/Inria_building/cocostyle/images',
+        annotations_path='/nas/tsgil/dataset/Inria_building/cocostyle/annotation.json'
+    )
+    # 일단은 훈련셋과 val셋 동일하게
+    train_ds = dataset
+    val_ds = dataset
 
     if args.distributed:
         train_sampler = DistributedSampler(train_ds, shuffle=True)
@@ -175,7 +170,7 @@ def main(args):
         batch_size=config.DATA.BATCH_SIZE,
         num_workers=config.DATA.NUM_WORKERS,
         sampler=train_sampler,
-        collate_fn=image_graph_collate_road_network,
+        collate_fn=image_graph_collate_road_network_coco,
         pin_memory=True
         )
 
@@ -184,14 +179,14 @@ def main(args):
         batch_size=int(config.DATA.BATCH_SIZE / args.world_size),
         num_workers=int(config.DATA.NUM_WORKERS / args.world_size),
         sampler=val_sampler,
-        collate_fn=image_graph_collate_road_network,
+        collate_fn=image_graph_collate_road_network_coco,
         pin_memory=True
         )
 
 
     ### Setting the model
-    net = build_model(config)
-    matcher = build_matcher(config)
+    net = R2U_Net() # TODO TopDiG클래스로 바꾸기
+    matcher = HungarianMatcher()
 
     if args.distributed:
         device = torch.device(f"cuda:{args.rank}")
@@ -205,11 +200,8 @@ def main(args):
         net = net.to(device)
         matcher = matcher.to(device)
 
-    if args.distributed:
-        relation_embed = net.module.relation_embed
-    else:
-        relation_embed = net.relation_embed
-
+    # Loss = L_node + L_graph
+    # TODO 로스 파일 수정하기
     loss = SetCriterion(config, matcher, net, distributed=args.distributed).cuda(args.local_rank)
 
 
@@ -231,24 +223,25 @@ def main(args):
         }
     ]
 
-    optimizer = torch.optim.AdamW(
+    # 5.3 섹션에 Adam 사용한다고 적혀있음 TopDiG
+    optimizer = torch.optim.Adam(
         param_dicts, lr=float(config.TRAIN.LR), weight_decay=float(config.TRAIN.WEIGHT_DECAY)
     )
-
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, config.TRAIN.LR_DROP)
+    # 스케줄러 사용안함
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, config.TRAIN.LR_DROP)
     
-    if args.resume:
-        checkpoint = torch.load(args.resume, map_location='cpu')
-        net.load_state_dict(checkpoint['net'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        scheduler.load_state_dict(checkpoint['scheduler'])
-        last_epoch = scheduler.last_epoch
-        scheduler.step_size = config.TRAIN.LR_DROP
+    # if args.resume:
+    #     checkpoint = torch.load(args.resume, map_location='cpu')
+    #     net.load_state_dict(checkpoint['net'])
+    #     optimizer.load_state_dict(checkpoint['optimizer'])
+    #     scheduler.load_state_dict(checkpoint['scheduler'])
+    #     last_epoch = scheduler.last_epoch
+    #     scheduler.step_size = config.TRAIN.LR_DROP
 
 
     print("Check local rank or not")
     print("=======================")
-    print(args.local_rank)
+    print("Local rank:", args.local_rank) # 0
 
     if args.local_rank == 0:
         is_master = True
@@ -264,8 +257,7 @@ def main(args):
     for epoch in range(1, n_epochs+1):
         train_loss = train_epoch(
             net,
-            relation_embed,
-            train_loader, 
+            data_loader=train_loader, 
             loss_fn=loss, 
             optimizer=optimizer, 
             device=device, 
@@ -277,29 +269,22 @@ def main(args):
 
         if is_master and (epoch % config.TRAIN.VAL_INTERVAL == 0):
             validate_epoch(
-                net, 
-                relation_embed,
-                config,
-                val_loader, 
+                net,
+                config=config,
+                data_loader=val_loader, 
                 loss_fn=loss, 
                 device=device, 
                 epoch=epoch, 
                 writer=writer, 
                 is_master=is_master)
             save_checkpoint(
-                net, 
-                relation_embed,
+                net,
                 optimizer,
                 epoch, 
                 config)
 
     if is_master and writer:
         writer.close()
-
-
-    # Do I need this line?
-    # if args.distributed:
-    #     torch.distributed.destroy_process_group()
 
 
 if __name__ == '__main__':

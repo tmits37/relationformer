@@ -3,11 +3,8 @@ from tqdm import tqdm
 
 import torch
 
-from inference import relation_infer
-
 
 def train_epoch(model,
-                relation_embed,
                 data_loader, 
                 loss_fn, 
                 optimizer, 
@@ -21,10 +18,12 @@ def train_epoch(model,
 
 
     total_loss = 0
+    scaler = torch.cuda.amp.GradScaler()
     with tqdm(data_loader, unit="batch") as tepoch:
         max_iter_in_epoch = len(tepoch)
         for idx, batch in enumerate(tepoch):
             tepoch.set_description(f"Epoch {epoch}")
+            # TODO 코코스타일이 적용되는지 확인하기
             images, seg, nodes, edges = batch
 
             images = images.to(device)
@@ -33,12 +32,16 @@ def train_epoch(model,
             edges = [edge.to(device) for edge in edges]
 
             optimizer.zero_grad()
-            h, out, srcs = model(images)
-            losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges})
-            loss = losses['total']
 
-            loss.backward()
-            optimizer.step()
+            with torch.cuda.amp.autocast():
+                # TODO model이 TopDiG 클래스로 바뀌면 아웃풋 형태 수정하기
+                h, out, srcs = model(images)
+                losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges})
+                loss = losses['total']
+
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             total_loss += loss.item()
             if is_master:
@@ -57,7 +60,6 @@ def train_epoch(model,
 
 def validate_epoch(
     model, 
-    relation_embed,
     config,
     data_loader, 
     loss_fn, 
@@ -67,7 +69,6 @@ def validate_epoch(
     is_master):
 
     model.eval()
-    # relation_embed.eval()
 
     total_loss = 0
     with tqdm(data_loader, unit="batch") as tepoch:
@@ -81,13 +82,6 @@ def validate_epoch(
             edges = [edge.to(device) for edge in edges]
 
             h, out, srcs = model(images)
-            pred_nodes, pred_edges = relation_infer(
-                h.detach(), 
-                out, 
-                relation_embed, 
-                config.MODEL.DECODER.OBJ_TOKEN, 
-                config.MODEL.DECODER.RLN_TOKEN
-            )
             losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges})
             loss = losses['total']
             total_loss += loss.item()
@@ -105,7 +99,7 @@ def validate_epoch(
     return total_loss / len(data_loader)
 
 
-def save_checkpoint(model, relation_embed, optimizer, epoch, config):
+def save_checkpoint(model, optimizer, epoch, config):
     """
     Save a checkpoint of the training process.
 
@@ -122,21 +116,13 @@ def save_checkpoint(model, relation_embed, optimizer, epoch, config):
         'optimizer_state_dict': optimizer.state_dict()
     }
 
-    # relation_embed_checkpoint = {
-    #     'epoch': epoch,
-    #     'model_state_dict': relation_embed.state_dict(),
-    #     'optimizer_state_dict': optimizer.state_dict()
-    # }
-
     # If using DDP, save the original model wrapped inside DDP
-    if isinstance(model, torch.nn.parallel.DistributedDataParallel):
+    if isinstance(model, torch.nn.parallel.DistributedDataParallel): # 해당없음
         checkpoint['model_state_dict'] = model.module.state_dict()
 
     savedir = os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED), 'models')
     os.makedirs(savedir, exist_ok=True)
     checkpoint_path = os.path.join(savedir, f'epochs_{epoch}.pth')
-    # relation_embed_checkpoint_path = os.path.join(savedir, f'relation_embed_epochs_{epoch}.pth')
 
     # Save the checkpoint
     torch.save(checkpoint, checkpoint_path)
-    # torch.save(relation_embed_checkpoint, relation_embed_checkpoint_path)

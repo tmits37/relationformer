@@ -255,11 +255,11 @@ def parse_args():
 
 
 if __name__ == "__main__":
-    dir_name = 'epochs_12'
+    dir_name = 'epochs_4'
     config_file = "configs/inria_pretrain.yaml"
     # ckpt_path = "/nas/tsgil/relationformer/work_dirs/R2U_Net_pretrain/runs/baseline_R2U_Net_pretrain_10/models/epochs_100.pth"
-    ckpt_path = f"/nas/tsgil/relationformer/work_dirs/R2U_Net_pretrain/runs/baseline_R2U_Net_pretrain_epoch40_10/models/{dir_name}.pth"
-    show_dir = f'/nas/tsgil/gil/infer_R2U/exp3/{dir_name}'
+    ckpt_path = f"/nas/tsgil/relationformer/work_dirs/R2U_Net_pretrain/runs/baseline_R2U_Net_pretrain_epoch40_lr2e-4_10/models/{dir_name}.pth"
+    show_dir = f'/nas/tsgil/gil/infer_R2U/exp4/{dir_name}'
 
     # args = parse_args()
     # config_file = args.config
