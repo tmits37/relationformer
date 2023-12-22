@@ -255,99 +255,101 @@ def parse_args():
 
 
 if __name__ == "__main__":
-    dir_name = 'epochs_4'
-    config_file = "configs/inria_pretrain.yaml"
-    # ckpt_path = "/nas/tsgil/relationformer/work_dirs/R2U_Net_pretrain/runs/baseline_R2U_Net_pretrain_10/models/epochs_100.pth"
-    ckpt_path = f"/nas/tsgil/relationformer/work_dirs/R2U_Net_pretrain/runs/baseline_R2U_Net_pretrain_epoch40_lr2e-4_10/models/{dir_name}.pth"
-    show_dir = f'/nas/tsgil/gil/infer_R2U/exp4/{dir_name}'
+    dir_name_ = 'epochs_'
+    for i in range(10, 11):
+        dir_name = dir_name_ + str(i*2)
+        config_file = "configs/inria_pretrain.yaml"
+        # ckpt_path = "/nas/tsgil/relationformer/work_dirs/R2U_Net_pretrain/runs/baseline_R2U_Net_pretrain_10/models/epochs_100.pth"
+        ckpt_path = f"/nas/tsgil/relationformer/work_dirs/R2U_Net_pretrain/runs/baseline_R2U_Net_pretrain_epoch20_lr1e-3_10/models/{dir_name}.pth"
+        show_dir = f'/nas/tsgil/gil/infer_R2U/exp5/{dir_name}'
 
-    # args = parse_args()
-    # config_file = args.config
-    # ckpt_path = args.checkpoint
-    # show_dir = args.show_dir
+        # args = parse_args()
+        # config_file = args.config
+        # ckpt_path = args.checkpoint
+        # show_dir = args.show_dir
 
-    with open(config_file) as f:
-        config = yaml.load(f, Loader=yaml.FullLoader)
+        with open(config_file) as f:
+            config = yaml.load(f, Loader=yaml.FullLoader)
 
-    config = dict2obj(config)
-    mean = np.array([0.485, 0.456, 0.406])
-    std = np.array([0.229, 0.224, 0.225])
+        config = dict2obj(config)
+        mean = np.array([0.485, 0.456, 0.406])
+        std = np.array([0.229, 0.224, 0.225])
 
-    val_ds= build_inria_data( # 이 함수는 폴더에서 셔플해서 ds 생성함
-        config, mode='test'
-    )
+        val_ds= build_inria_data( # 이 함수는 폴더에서 셔플해서 ds 생성함
+            config, mode='test'
+        )
 
-    val_loader = DataLoader(val_ds,
-                            batch_size=config.DATA.BATCH_SIZE,
-                            shuffle=False,
-                            num_workers=config.DATA.NUM_WORKERS,
-                            # collate_fn=image_graph_collate_road_network,
-                            pin_memory=True)
-    print(len(val_ds), len(val_loader)) # 테스트셋 전체 지역 패치: 25036개, 훈련셋 지역 21: 631개
+        val_loader = DataLoader(val_ds,
+                                batch_size=config.DATA.BATCH_SIZE,
+                                shuffle=False,
+                                num_workers=config.DATA.NUM_WORKERS,
+                                # collate_fn=image_graph_collate_road_network,
+                                pin_memory=True)
+        print(len(val_ds), len(val_loader)) # 테스트셋 전체 지역 패치: 25036개, 훈련셋 지역 21: 631개
 
-    model = R2U_Net()
-    device = torch.device("cuda")
-    model = model.to(device)
+        model = R2U_Net()
+        device = torch.device("cuda")
+        model = model.to(device)
 
-    checkpoint = torch.load(ckpt_path, map_location='cpu')
-    missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model_state_dict'], strict=False)
-    unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
-    if len(missing_keys) > 0:
-        print('Missing Keys: {}'.format(missing_keys))
-    if len(unexpected_keys) > 0:
-        print('Unexpected Keys: {}'.format(unexpected_keys))
+        checkpoint = torch.load(ckpt_path, map_location='cpu')
+        missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
+        if len(missing_keys) > 0:
+            print('Missing Keys: {}'.format(missing_keys))
+        if len(unexpected_keys) > 0:
+            print('Unexpected Keys: {}'.format(unexpected_keys))
 
 
-    model.eval()
-    if not os.path.isdir(show_dir):
-        os.makedirs(show_dir)
-        os.makedirs(show_dir + "/img")
-        os.makedirs(show_dir + "/gt_heatmap")
-        os.makedirs(show_dir + "/pred_heatmap")
+        model.eval()
+        if not os.path.isdir(show_dir):
+            os.makedirs(show_dir)
+            os.makedirs(show_dir + "/img")
+            os.makedirs(show_dir + "/gt_heatmap")
+            os.makedirs(show_dir + "/pred_heatmap")
 
-    iteration = 0
-    for idx, (images, seg, heatmap) in enumerate(tqdm(val_loader, total=len(val_loader))):
-        iteration = iteration+1
-        if iteration == 4: # 1~3 이터레이션만 돌리기 총 3400 iters
-            break
-        images = images.cuda()
+        iteration = 0
+        for idx, (images, seg, heatmap) in enumerate(tqdm(val_loader, total=len(val_loader))):
+            iteration = iteration+1
+            if iteration == 4: # 1~3 이터레이션만 돌리기 총 3400 iters
+                break
+            images = images.cuda()
 
-        seg = seg.cuda()
-        out = model(images).detach()
-        out = torch.sigmoid(out) # BCEwithLogit을 사용했기 때문
-        # pred_nodes, pred_edges, pred_nodes_box, pred_nodes_box_score, pred_nodes_box_class, pred_edges_box_score, pred_edges_box_class = relation_infer(
-        #             h.detach(), out, model.relation_embed, config.MODEL.DECODER.OBJ_TOKEN, config.MODEL.DECODER.RLN_TOKEN,
-        #             nms=False, map_=True
-        #             )
+            seg = seg.cuda()
+            out = model(images).detach()
+            out = torch.sigmoid(out) # BCEwithLogit을 사용했기 때문
+            # pred_nodes, pred_edges, pred_nodes_box, pred_nodes_box_score, pred_nodes_box_class, pred_edges_box_score, pred_edges_box_class = relation_infer(
+            #             h.detach(), out, model.relation_embed, config.MODEL.DECODER.OBJ_TOKEN, config.MODEL.DECODER.RLN_TOKEN,
+            #             nms=False, map_=True
+            #             )
 
-        start_idx = idx*config.DATA.BATCH_SIZE
-        for i in range(len(images)): # 0~31, 배치 사이즈만큼 이미지 처리
-            # img of patch
-            # NumPy 배열을 PIL 이미지로 변환
-            image = images[i].cpu().numpy()
-            min_value = np.min(image)
-            max_value = np.max(image)
-            image = (image - min_value) / (max_value - min_value)
-            image = (image * 255).astype('uint8')
-            image = image.transpose(1,2,0)
-            image = Image.fromarray(image, 'RGB')
-            # 이미지 파일로 저장할 경로 지정
-            save_path = f'{show_dir}/img/{start_idx+i}.png'
-            # 이미지 파일로 저장
-            image.save(save_path)
-            # gt_heatmap
-            image = heatmap[i].cpu().numpy()
-            # image = image+0.5
-            image = (image * 255).astype('uint8')
-            image = np.squeeze(image, axis=0)
-            image = Image.fromarray(image, 'L')
-            save_path = f'{show_dir}/gt_heatmap/{start_idx+i}.png'
-            image.save(save_path)
-            # pred_heatmap
-            image = out[i].cpu().numpy()
-            image = (image * 255).astype('uint8')
-            image = np.squeeze(image, axis=0)
-            image = Image.fromarray(image, 'L')
-            save_path = f'{show_dir}/pred_heatmap/{start_idx+i}.png'
-            image.save(save_path)
+            start_idx = idx*config.DATA.BATCH_SIZE
+            for i in range(len(images)): # 0~31, 배치 사이즈만큼 이미지 처리
+                # img of patch
+                # NumPy 배열을 PIL 이미지로 변환
+                image = images[i].cpu().numpy()
+                min_value = np.min(image)
+                max_value = np.max(image)
+                image = (image - min_value) / (max_value - min_value)
+                image = (image * 255).astype('uint8')
+                image = image.transpose(1,2,0)
+                image = Image.fromarray(image, 'RGB')
+                # 이미지 파일로 저장할 경로 지정
+                save_path = f'{show_dir}/img/{start_idx+i}.png'
+                # 이미지 파일로 저장
+                image.save(save_path)
+                # gt_heatmap
+                image = heatmap[i].cpu().numpy()
+                # image = image+0.5
+                image = (image * 255).astype('uint8')
+                image = np.squeeze(image, axis=0)
+                image = Image.fromarray(image, 'L')
+                save_path = f'{show_dir}/gt_heatmap/{start_idx+i}.png'
+                image.save(save_path)
+                # pred_heatmap
+                image = out[i].cpu().numpy()
+                image = (image * 255).astype('uint8')
+                image = np.squeeze(image, axis=0)
+                image = Image.fromarray(image, 'L')
+                save_path = f'{show_dir}/pred_heatmap/{start_idx+i}.png'
+                image.save(save_path)
 

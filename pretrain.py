@@ -233,15 +233,15 @@ def main(args):
         }
     ]
 
-    # optimizer = torch.optim.AdamW(
-    #     param_dicts, lr=float(config.TRAIN.LR), weight_decay=float(config.TRAIN.WEIGHT_DECAY)
-    # )
-    optimizer = torch.optim.Adam(
-        param_dicts, weight_decay=float(config.TRAIN.WEIGHT_DECAY)
+    optimizer = torch.optim.AdamW(
+        param_dicts, lr=float(config.TRAIN.LR), weight_decay=float(config.TRAIN.WEIGHT_DECAY)
     )
+    # optimizer = torch.optim.Adam(
+    #     param_dicts, weight_decay=float(config.TRAIN.WEIGHT_DECAY)
+    # )
 
     # 논문에서 lr 스케줄러 안 쓴다고 함. 한번 사용해보기
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, config.TRAIN.LR_DROP)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.TRAIN.LR_DROP, verbose=True)
     
     if args.resume:
         checkpoint = torch.load(args.resume, map_location='cpu')
@@ -279,7 +279,10 @@ def main(args):
             writer=writer, 
             is_master=is_master)
         if is_master:
+            scheduler.step()
+            current_lr = scheduler.get_last_lr()
             print(f"Epoch {epoch}, Training Loss: {train_loss}")
+            print(f"Epoch {epoch}: Current learning rate = {current_lr}")
 
         if is_master and (epoch % config.TRAIN.VAL_INTERVAL == 0):
             validate_epoch(
@@ -292,12 +295,13 @@ def main(args):
                 epoch=epoch, 
                 writer=writer, 
                 is_master=is_master)
-            save_checkpoint(
-                net, 
-                # relation_embed,
-                optimizer,
-                epoch, 
-                config)
+        save_checkpoint(
+            net, 
+            # relation_embed,
+            optimizer,
+            scheduler,
+            epoch, 
+            config)
 
     if is_master and writer:
         writer.close()

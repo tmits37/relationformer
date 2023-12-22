@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from dataloader_cocostyle import CrowdAI, image_graph_collate_road_network_coco
-from models.backbone_R2U_Net import R2U_Net
+from models.TopDiG import build_TopDiG
 from models.DGS import HungarianMatcher
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.distributed import DistributedSampler
@@ -185,7 +185,7 @@ def main(args):
 
 
     ### Setting the model
-    net = R2U_Net() # TODO TopDiG클래스로 바꾸기
+    net = build_TopDiG(config)
     matcher = HungarianMatcher()
 
     if args.distributed:
@@ -224,11 +224,11 @@ def main(args):
     ]
 
     # 5.3 섹션에 Adam 사용한다고 적혀있음 TopDiG
-    optimizer = torch.optim.Adam(
+    # 근데 요즘 트렌드는 AdamW
+    optimizer = torch.optim.AdamW(
         param_dicts, lr=float(config.TRAIN.LR), weight_decay=float(config.TRAIN.WEIGHT_DECAY)
     )
-    # 스케줄러 사용안함
-    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, config.TRAIN.LR_DROP)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.TRAIN.LR_DROP)
     
     # if args.resume:
     #     checkpoint = torch.load(args.resume, map_location='cpu')
@@ -265,7 +265,10 @@ def main(args):
             writer=writer, 
             is_master=is_master)
         if is_master:
+            scheduler.step()
+            current_lr = scheduler.get_last_lr()
             print(f"Epoch {epoch}, Training Loss: {train_loss}")
+            print(f"Epoch {epoch}: Current learning rate = {current_lr}")
 
         if is_master and (epoch % config.TRAIN.VAL_INTERVAL == 0):
             validate_epoch(
@@ -277,11 +280,12 @@ def main(args):
                 epoch=epoch, 
                 writer=writer, 
                 is_master=is_master)
-            save_checkpoint(
-                net,
-                optimizer,
-                epoch, 
-                config)
+        save_checkpoint(
+            net,
+            optimizer,
+            scheduler,
+            epoch, 
+            config)
 
     if is_master and writer:
         writer.close()

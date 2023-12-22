@@ -13,9 +13,7 @@ def train_epoch(model,
                 writer, 
                 is_master
                 ):
-
     model.train()
-
 
     total_loss = 0
     scaler = torch.cuda.amp.GradScaler()
@@ -34,9 +32,8 @@ def train_epoch(model,
             optimizer.zero_grad()
 
             with torch.cuda.amp.autocast():
-                # TODO model이 TopDiG 클래스로 바뀌면 아웃풋 형태 수정하기
-                h, out, srcs = model(images)
-                losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges})
+                out = model(images)
+                losses = loss_fn(out, {'nodes': nodes, 'edges': edges})
                 loss = losses['total']
 
             scaler.scale(loss).backward()
@@ -81,8 +78,8 @@ def validate_epoch(
             nodes = [node.to(device) for node in nodes]
             edges = [edge.to(device) for edge in edges]
 
-            h, out, srcs = model(images)
-            losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges})
+            out = model(images)
+            losses = loss_fn(out, {'nodes': nodes, 'edges': edges})
             loss = losses['total']
             total_loss += loss.item()
 
@@ -99,7 +96,7 @@ def validate_epoch(
     return total_loss / len(data_loader)
 
 
-def save_checkpoint(model, optimizer, epoch, config):
+def save_checkpoint(model, optimizer, scheduler, epoch, config):
     """
     Save a checkpoint of the training process.
 
@@ -113,7 +110,8 @@ def save_checkpoint(model, optimizer, epoch, config):
     checkpoint = {
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict()
+        'optimizer_state_dict': optimizer.state_dict(),
+        'schedulaer_state_dict': scheduler.state_dict()
     }
 
     # If using DDP, save the original model wrapped inside DDP

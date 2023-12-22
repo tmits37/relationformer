@@ -3,9 +3,6 @@ from tqdm import tqdm
 
 import torch
 
-# from inference import relation_infer
-
-
 def train_epoch(model,
                 data_loader, 
                 loss_fn, 
@@ -100,7 +97,7 @@ def validate_epoch(
     return total_loss / len(data_loader)
 
 
-def save_checkpoint(model, optimizer, epoch, config):
+def save_checkpoint(model, optimizer, scheduler, epoch, config):
     """
     Save a checkpoint of the training process.
 
@@ -114,7 +111,8 @@ def save_checkpoint(model, optimizer, epoch, config):
     checkpoint = {
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict()
+        'optimizer_state_dict': optimizer.state_dict(),
+        'schedulaer_state_dict': scheduler.state_dict()
     }
 
     # relation_embed_checkpoint = {

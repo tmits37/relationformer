@@ -70,20 +70,20 @@ class SetCriterion(nn.Module):
         """
         super().__init__()
         self.matcher = matcher
-        # self.relation_embed = relation_embed
         self.net = net
         self.distributed = distributed
-        self.rln_token = config.MODEL.DECODER.RLN_TOKEN
-        self.obj_token = config.MODEL.DECODER.OBJ_TOKEN
         self.losses = config.TRAIN.LOSSES
-        self.weight_dict = {'boxes':config.TRAIN.W_BBOX,
-                            'class':config.TRAIN.W_CLASS,
-                            'cards':config.TRAIN.W_CARD,
-                            'nodes':config.TRAIN.W_NODE,
-                            'edges':config.TRAIN.W_EDGE,
-                            }
+        self.weight_dict = {
+            'node':config.TRAIN.W_NODE,
+            'graph':config.TRAIN.W_GRAPH,
+            }
         
-    def loss_class(self, outputs, indices):
+    def loss_node(self, outputs, indices): # TODO 이걸 loss_node로 가야겠다
+        """ 목적: 분류에 대한 손실을 계산합니다.
+        작동 방식: outputs['pred_logits']를 사용하여 분류 손실을 계산합니다.
+        이는 예측된 클래스 확률과 실제 클래스 레이블 사이의 크로스 엔트로피 손실입니다.
+        특이사항: 가중치(weight)를 사용하여 특정 클래스에 대한 손실의 중요도를 조절합니다.
+        """
         """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
            targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
            The target boxes are expected in format (center_x, center_y, w, h), normalized by the image size.
@@ -105,9 +105,32 @@ class SetCriterion(nn.Module):
         targets[idx] = 1.0
         loss = F.cross_entropy(outputs.permute(0,2,1), targets, weight=weight, reduction='mean')
         # cls_acc = 100 - accuracy(outputs, targets_one_hot)[0]
+
+
+
+        # loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([10]).cuda())
+
+
+
+
         return loss
     
+    def loss_graph(self, outputs, targets, indices):
+        # TODO 로스 짜기 -> 검증하기
+        # 어차피 gt가 1인 경우면 맞냐 틀리냐 로스로 들어감
+        # gt에 대한 indices를 모아놓으면 시간복잡도를 낮출 수 있어보임
+        # 모든 gt indices에 대해 맞냐 틀리냐 Sum 시키는 코드 만들기
+
+        # sum_pred_values = sum(outputs[i, j] for i, j in indices)
+        loss = 0
+        for i, j in indices:
+            loss += F.cross_entropy(outputs[i].unsqueeze(0), torch.tensor([j]))
+        return loss / len(outputs)
+    
     def loss_cardinality(self, outputs, indices):
+        """ 목적: 예측된 객체 수와 실제 객체 수 사이의 차이를 계산하는 카디널리티 손실을 계산합니다.
+        특이사항: 이는 주로 로깅 목적으로 사용되며, 그래디언트를 전파하지 않습니다.
+        """
         """ Compute the cardinality error, ie the absolute error in the number of predicted non-empty boxes
         This is not really a loss, it is intended for logging purposes only. It doesn't propagate gradients
         """
@@ -124,7 +147,10 @@ class SetCriterion(nn.Module):
 
         return loss
 
-    def loss_nodes(self, outputs, targets, indices):
+    def loss_nodes_pos(self, outputs, targets, indices):
+        """ 목적: 노드 위치에 대한 손실을 계산합니다.
+        작동 방식: L1 손실을 사용하여 예측된 노드 위치와 실제 노드 위치 간의 차이를 계산합니다.
+        """
         """Classification loss (NLL)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
         """
@@ -137,116 +163,6 @@ class SetCriterion(nn.Module):
         loss = F.l1_loss(pred_nodes, target_nodes, reduction='none') # TODO: check detr for loss function
 
         loss = loss.sum() / num_nodes
-
-        return loss
-    
-    def loss_boxes(self, outputs, targets, indices):
-        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
-           targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
-           The target boxes are expected in format (center_x, center_y, w, h), normalized by the image size.
-        """
-        num_boxes = sum(len(t) for t in targets)
-        idx = self._get_src_permutation_idx(indices)
-        src_boxes = outputs[idx]
-
-        target_boxes = torch.cat([t[i] for t, (_, i) in zip(targets, indices)], dim=0)
-        target_boxes = torch.cat([target_boxes, 0.15*torch.ones(target_boxes.shape, device=target_boxes.device)], dim=-1)
-
-        loss = 1 - torch.diag(box_ops_2D.generalized_box_iou(
-            box_ops_2D.box_cxcywh_to_xyxy(src_boxes),
-            box_ops_2D.box_cxcywh_to_xyxy(target_boxes)))
-        loss = loss.sum() / num_boxes
-        return loss
-
-    def loss_edges(self, h, target_nodes, target_edges, indices, num_edges=80):
-        """Compute the losses related to the masks: the focal loss and the dice loss.
-           targets dicts must contain the key "masks" containing a tensor of dim [nb_target_boxes, h, w]
-        """
-        # try:
-        # all token except the last one is object token
-        object_token = h[...,:self.obj_token,:]
-        
-        # last token is relation token
-        if self.rln_token > 0:
-            relation_token = h[..., self.obj_token:self.rln_token+self.obj_token, :]
-
-        # map the ground truth edge indices by the matcher ordering
-        target_edges = [[t for t in tgt if t[0].cpu() in i and t[1].cpu() in i] for tgt, (_, i) in zip(target_edges, indices)]
-        target_edges = [torch.stack(t, 0) if len(t)>0 else torch.zeros((0,2), dtype=torch.long).to(h.device) for t in target_edges]
-
-        new_target_edges = []
-        for t, (_, i) in zip(target_edges, indices):
-            tx = t.clone().detach()
-            for idx, k in enumerate(i):
-                t[tx==k]=idx
-            new_target_edges.append(t)
-
-        # all_edges = []
-        edge_labels = []
-        relation_feature = []
-        
-        # loop through each of batch to collect the edge and node
-        for batch_id, (pos_edge, n) in enumerate(zip(new_target_edges, target_nodes)):
-            
-            # map the predicted object token by the matcher ordering
-            rearranged_object_token = object_token[batch_id, indices[batch_id][0],:]
-            
-            # find the -ve edges for training
-            full_adj = torch.ones((n.shape[0],n.shape[0]))-torch.diag(torch.ones(n.shape[0]))
-            full_adj[pos_edge[:,0],pos_edge[:,1]]=0
-            full_adj[pos_edge[:,1],pos_edge[:,0]]=0
-            neg_edges = torch.nonzero(torch.triu(full_adj))
-            # shuffle edges for undirected edge
-            shuffle = np.random.randn((pos_edge.shape[0]))>0
-            to_shuffle = pos_edge[shuffle,:]
-            pos_edge[shuffle,:] = to_shuffle[:,[1, 0]]
-
-            # restrict unbalance in the +ve/-ve edge
-            if pos_edge.shape[0]>40:
-                # print('Reshaping')
-                pos_edge = pos_edge[:40,:]
-            
-            # random sample -ve edge
-            idx_ = torch.randperm(neg_edges.shape[0])
-            neg_edges = neg_edges[idx_, :].to(pos_edge.device)
-
-            # shuffle edges for undirected edge
-            shuffle = np.random.randn((neg_edges.shape[0]))>0
-            to_shuffle = neg_edges[shuffle,:]
-            neg_edges[shuffle,:] = to_shuffle[:,[1, 0]]
-
-            # check whether the number of -ve edges are within limit 
-            if num_edges-pos_edge.shape[0]<neg_edges.shape[0]:
-                take_neg = num_edges-pos_edge.shape[0]
-                total_edge = num_edges
-            else:
-                take_neg = neg_edges.shape[0]
-                total_edge = pos_edge.shape[0]+neg_edges.shape[0]
-            all_edges_ = torch.cat((pos_edge, neg_edges[:take_neg]), 0)
-            # all_edges.append(all_edges_)
-            edge_labels.append(torch.cat((torch.ones(pos_edge.shape[0], dtype=torch.long), torch.zeros(take_neg, dtype=torch.long)), 0))
-
-            if self.rln_token > 0:
-                relation_feature.append(torch.cat((rearranged_object_token[all_edges_[:,0],:],rearranged_object_token[all_edges_[:,1],:],relation_token[batch_id,...].repeat(total_edge,1)), 1))
-            else:
-                relation_feature.append(torch.cat((rearranged_object_token[all_edges_[:,0],:],rearranged_object_token[all_edges_[:,1],:]), 1))
-
-        # [print(e,l) for e,l in zip(all_edges, edge_labels)]
-        # torch.tensor(list(itertools.combinations(range(n.shape[0]), 2))).to(e.get_device())
-        relation_feature = torch.cat(relation_feature, 0)
-        edge_labels = torch.cat(edge_labels, 0).to(h.get_device())
-
-        if self.distributed:
-            relation_pred = self.net.module.relation_embed(relation_feature)
-        else: # for single gpu usage
-            relation_pred = self.net.relation_embed(relation_feature)
-
-        # relation_pred = self.relation_embed(relation_feature)
-
-        # valid_edges = torch.argmax(relation_pred, -1)
-        # print('valid_edge number', valid_edges.sum())
-        loss = F.cross_entropy(relation_pred, edge_labels, reduction='mean')
-
 
         return loss
 
@@ -262,7 +178,7 @@ class SetCriterion(nn.Module):
         tgt_idx = torch.cat([tgt for (_, tgt) in indices])
         return batch_idx, tgt_idx
 
-    def forward(self, h, out, target):
+    def forward(self, out, target): # TODO out target I/O 따지기
         """ This performs the loss computation.
         Parameters:
              outputs: dict of tensors, see the output specification of the model for the format
@@ -274,11 +190,9 @@ class SetCriterion(nn.Module):
         indices = self.matcher(out, target)
         
         losses = {}
-        losses['class'] = self.loss_class(out['pred_logits'], indices)
-        losses['nodes'] = self.loss_nodes(out['pred_nodes'][...,:2], target['nodes'], indices)
-        losses['boxes'] = self.loss_boxes(out['pred_nodes'], target['nodes'], indices)
-        losses['edges'] = self.loss_edges(h, target['nodes'], target['edges'], indices)
-        losses['cards'] = self.loss_cardinality(out['pred_logits'], indices)
+        # losses['nodes'] = self.loss_nodes_pos(out['pred_nodes'][...,:2], target['nodes'], indices)
+        losses['node'] = self.loss_node(out['pred_logits'], indices)
+        losses['graph'] = self.loss_graph(out, target, indices)
         
         losses['total'] = sum([losses[key]*self.weight_dict[key] for key in self.losses])
 
