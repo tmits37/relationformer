@@ -1,101 +1,8 @@
-import torch
+from abc import ABC
 import math
+
+import torch
 from torch import nn
-from typing import Callable
-from monai.utils import MetricReduction
-from monai.metrics.utils import do_metric_reduction
-from monai.utils import MetricReduction
-from monai.config import IgniteInfo
-from monai.utils import min_version, optional_import
-from typing import TYPE_CHECKING, Any, Callable, List, Optional, Sequence
-from monai.utils import evenly_divisible_all_gather
-from monai.config import TensorOrList
-import pdb
-import warnings
-
-reinit__is_reduced, _ = optional_import(
-    "ignite.metrics.metric", IgniteInfo.OPT_IMPORT_VERSION, min_version, "reinit__is_reduced"
-)
-if TYPE_CHECKING:
-    from ignite.engine import Engine
-    from ignite.metrics import Metric
-else:
-    Engine, _ = optional_import("ignite.engine", IgniteInfo.OPT_IMPORT_VERSION, min_version, "Engine")
-    Metric, _ = optional_import("ignite.metrics", IgniteInfo.OPT_IMPORT_VERSION, min_version, "Metric")
-
-from abc import ABC, abstractmethod
-
-
-class MeanSMD(Metric):
-    r"""
-    Computes Dice score metric from full size Tensor and collects average over batch, class-channels, iterations.
-    """
-    def __init__(
-        self, output_transform: Callable = lambda x: x) -> None:
-        """[summary]
-
-        Args:
-            output_transform (Callable, optional): [description]. Defaults to lambdax:x.
-        """        ''''''
-        self.metric_fn = StreetMoverDistance(eps=1e-7, max_iter=100, reduction=MetricReduction.MEAN)
-        super().__init__(output_transform=output_transform,)
-
-    @reinit__is_reduced
-    def reset(self) -> None:
-        self.metric_fn.reset()
-
-    @reinit__is_reduced
-    def update(self, output) -> None:
-        """[summary]
-
-        Args:
-            output ([type]): [description]
-
-        Returns:
-            [type]: [description]
-        """        ''''''
-        y_A, y_nodes, output_A, output_nodes = output
-
-        return self.metric_fn(y_A, y_nodes, output_A, output_nodes)
-
-    def compute(self) -> Any:
-        """[summary]
-
-        Raises:
-            RuntimeError: [description]
-
-        Returns:
-            Any: [description]
-        """        ''''''
-        result = self.metric_fn.aggregate()
-        if isinstance(result, (tuple, list)):
-            if len(result) > 1:
-                warnings.warn("metric handler can only record the first value of result list.")
-            result = result[0]
-
-        self._is_reduced = True
-
-        # save score of every image into engine.state for other components
-        if self.save_details:
-            if self._engine is None or self._name is None:
-                raise RuntimeError("please call the attach() function to connect expected engine first.")
-            self._engine.state.metric_details[self._name] = self.metric_fn.get_buffer()
-
-        return result.item() if isinstance(result, torch.Tensor) else result
-
-    def attach(self, engine: Engine, name: str) -> None:
-        """[summary]
-
-        Args:
-            engine (Engine): [description]
-            name (str): [description]
-        """        ''''''
-        super().attach(engine=engine, name=name)
-        # FIXME: record engine for communication, ignite will support it in the future version soon
-        self._engine = engine
-        self._name = name
-        if self.save_details and not hasattr(engine.state, "metric_details"):
-            engine.state.metric_details = {}
 
 
 class StreetMoverDistance(ABC):
@@ -123,10 +30,10 @@ class StreetMoverDistance(ABC):
         super(StreetMoverDistance, self).__init__()
         self.reduction = reduction
         self.sinkhorn_distance = SinkhornDistance(eps=eps, max_iter=max_iter, reduction=reduction)
-        self.buffer_num: int = 0
-        self._buffers: Optional[List[List[torch.Tensor]]] = None
-        self._synced_tensors: Optional[List[Optional[torch.Tensor]]] = None
-        self._synced: bool = False
+        # self.buffer_num: int = 0
+        # self._buffers: Optional[List[List[torch.Tensor]]] = None
+        # self._synced_tensors: Optional[List[Optional[torch.Tensor]]] = None
+        # self._synced: bool = False
 
     def __call__(self, node_list, edge_list, pred_node_list, pred_edge_list):  # type: ignore
         """[summary]
@@ -143,8 +50,6 @@ class StreetMoverDistance(ABC):
         # node_list = [torch.cat((node, torch.zeros((node.shape[0], 1)).cuda()), dim=1) for node in node_list]
         # pred_node_list = [torch.cat((node, torch.zeros((node.shape[0], 1)).cuda()), dim=1) for node in pred_node_list]
         ret = self._compute_list(node_list, edge_list, pred_node_list, pred_edge_list)
-
-        self.add(ret)
 
         return ret
 
@@ -164,11 +69,8 @@ class StreetMoverDistance(ABC):
         # compute dice (BxC) for each channel for each batch
         for nodes, edges, pred_nodes, pred_edges in zip(node_list, edge_list, pred_node_list, pred_edge_list):
             # print(nodes.shape, edges.shape)
-            try:
-                A = torch.zeros((nodes.shape[0], nodes.shape[0]))
-                A[edges[:,0],edges[:,1]] = 1
-            except:
-                pdb.set_trace()
+            A = torch.zeros((nodes.shape[0], nodes.shape[0]))
+            A[edges[:,0],edges[:,1]] = 1
 
             pred_A = torch.zeros((pred_nodes.shape[0], pred_nodes.shape[0]))
             if nodes.shape[0]>1 and pred_nodes.shape[0]>1 and pred_edges.size != 0:
@@ -183,72 +85,6 @@ class StreetMoverDistance(ABC):
 
         ret = torch.cat(ret, dim=0)
         return ret
-
-    def reset(self):
-        """
-        Reset the buffers for cumulative tensors and the synced results.
-
-        """
-        self._buffers = None
-        self._synced_tensors = None
-        self._synced = False
-
-    def add(self, *data: torch.Tensor):
-        """
-        Add samples to the cumulative buffers.
-
-        Args:
-            data: list of input tensor, make sure the input data order is always the same in a round.
-                every item of data will be added to the corresponding buffer.
-
-        """
-        data_len = len(data)
-        if self._buffers is None:
-            self._buffers = [[] for _ in range(data_len)]
-        elif len(self._buffers) != data_len:
-            raise ValueError(f"data length: {data_len} doesn't match buffers length: {len(self._buffers)}.")
-        if self._synced_tensors is None:
-            self._synced_tensors = [None for _ in range(data_len)]
-
-        for i, d in enumerate(data):
-            if not isinstance(d, torch.Tensor):
-                raise ValueError(f"the data to cumulate in a buffer must be PyTorch Tensor, but got: {type(d)}.")
-            self._buffers[i].append(d)
-        self._synced = False
-
-    def aggregate(self):  # type: ignore
-        """
-        Execute reduction logic for the output of `compute_meandice`.
-
-        """
-        data = self.get_buffer()
-        if not isinstance(data, torch.Tensor):
-            raise ValueError("the data to aggregate must be PyTorch Tensor.")
-
-        # do metric reduction
-        # print(data)
-        f, not_nans = do_metric_reduction(data.unsqueeze(0), self.reduction)
-        return f * 100
-
-    def _sync(self):
-        """
-        All gather the buffers across distributed ranks for aggregating.
-        Every buffer will be concatenated as a PyTorch Tensor.
-
-        """
-        # print(self._buffers)
-        self._synced_tensors = [evenly_divisible_all_gather(torch.cat(b, dim=0), concat=True) for b in self._buffers]
-        self._synced = True
-
-    def get_buffer(self):
-        """
-        Get the synced buffers list.
-        A typical usage is to generate the metrics report based on the raw metric details.
-
-        """
-        if not self._synced:
-            self._sync()
-        return self._synced_tensors[0] if len(self._synced_tensors) == 1 else self._synced_tensors
 
 
 
@@ -340,99 +176,6 @@ def get_points(next_step, step, a, b):
 
 def euclidean_distance(a, b):
     return math.sqrt((a - b).pow(2).sum().item())
-
-
-# def get_point_cloud(A, nodes, n_points):
-#     """[summary]
-
-#     Args:
-#         A ([type]): [description]
-#         nodes ([type]): [description]
-#         n_points ([type]): [description]
-
-#     Returns:
-#         [type]: [description]
-#     """    ''''''
-#     n_divisions = n_points - 1 + 0.01
-#     total_len = get_cumulative_distance(A, nodes)
-#     step = total_len / n_divisions
-#     points = []
-#     next_step = 0.
-#     used_len = 0.
-    
-#     for i in range(A.shape[0]):
-#         for j in range(i):
-#             if A[i, j] == 1.:
-#                 next_step, used, pts = get_points(next_step, step, nodes[i-j-1].clone(), nodes[i].clone())
-#                 used_len += used
-#                 points += pts
-#                 last_node = nodes[i].clone()
-#                 # plot_point_cloud(adj[0], coord[0], pts)
-#     # trick in case we miss points, due to approximations in python computation of distances
-#     if 0 < len(points) < n_points:
-#         while len(points) < n_points:
-#             points.append((last_node[0].item(), last_node[1].item(), last_node[2].item()))
-#     # if the graph has no edges, create point cloud with 100 points in (0,0)
-#     if len(points) == 0:
-#         return torch.zeros((n_points, 3))
-#         # print(f"The point cloud has an expected number of points: {len(points)} instead of {n_points}")
-#     # print(f"Generated {len(points)} points using {used_len}/{total_len} length")
-# #         print(np.array(points).shape)
-#     return torch.FloatTensor(points)
-
-
-# def get_cumulative_distance(A, nodes):
-#     """[summary]
-
-#     Args:
-#         A ([type]): [description]
-#         nodes ([type]): [description]
-
-#     Returns:
-#         [type]: [description]
-#     """    ''''''
-#     tot = 0.
-#     #print("Shape:",A.shape)
-#     #print("Shape[0]:",A.shape[0])
-#     for i in range(A.shape[0]):
-#         for j in range(i):
-#             #print(i, j)
-#             if A[i, j] == 1.:
-#                 #print(nodes[i], nodes[i-j-1])
-#                 tot += euclidean_distance(nodes[i], nodes[i-j-1])
-#     return tot
-
-
-# def get_points(next_step, step, a, b):
-#     """[summary]
-
-#     Args:
-#         next_step ([type]): [description]
-#         step ([type]): [description]
-#         a ([type]): [description]
-#         b ([type]): [description]
-#     """    ''''''
-# #     print(a, b)
-#     l = euclidean_distance(a, b)
-#     vec = b-a
-#     unit_vec = vec/l
-#     pts = []
-#     used = 0
-#     while next_step <= l:
-#         used += next_step
-#         l -= next_step
-#         a[0] += unit_vec[0]*next_step
-#         a[1] += unit_vec[1]*next_step
-#         a[2] += unit_vec[2]*next_step
-#         pts.append((a[0].item(), a[1].item(), a[2].item()))
-#         next_step = step
-#     next_step = step - l
-#     return next_step, used, pts
-
-
-# def euclidean_distance(a, b):
-#     return math.sqrt((a - b).pow(2).sum().item())
-
 
 
 # From https://github.com/dfdazac/wassdistance

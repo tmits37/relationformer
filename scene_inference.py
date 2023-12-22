@@ -23,6 +23,8 @@ def to_img_and_seg_from_results(filelist, rootdir, image_size=(2048, 2048), patc
     for filename in filelist:
         img = np.array(Image.open(os.path.join(rootdir, 'patch', filename)))
         seg = np.array(Image.open(os.path.join(rootdir, 'seg', filename)))
+        # seg = np.array(Image.open(os.path.join(rootdir, 'seg_pred', filename)))
+        # print(filename, seg.dtype, seg.shape, np.unique(seg))
 
         x0 = int(filename.split('_')[1])
         y0 = int(filename.split('_')[2])
@@ -141,3 +143,10 @@ if __name__ == "__main__":
             ax[1].imshow(gt_tot_graph)
             savename = os.path.join(rootdir, 'inference_plt', f'{region_num}_result.png')
             plt.savefig(savename, dpi=200, facecolor='#eeeeee')
+
+            # fig, ax = plt.subplots(1, 2, figsize=(18,9))
+            # ax[0].imshow(tot_seg)
+            # ax[1].imshow(gt_tot_graph)
+            # os.makedirs(os.path.join(rootdir, 'inference_plt_seg'), exist_ok=True)
+            # savename = os.path.join(rootdir, 'inference_plt_seg', f'{region_num}_result.png')
+            # plt.savefig(savename, dpi=200, facecolor='#eeeeee')
