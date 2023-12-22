@@ -24,7 +24,7 @@ os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config',
+    parser.add_argument('config',
                         default=None,
                         help='config file (.yml) containing the hyper-parameters for training. '
                             'If None, use the nnU-Net config. See /config for examples.')
@@ -297,11 +297,13 @@ def main(args):
     if is_master and writer:
         writer.close()
 
-
     # Do I need this line?
-    # if args.distributed:
-    #     torch.distributed.destroy_process_group()
+    if args.distributed:
+        torch.distributed.barrier()
+        torch.distributed.destroy_process_group()
+        print("Destroyed")
 
+    exit(0) 
 
 if __name__ == '__main__':
     args = parse_args()

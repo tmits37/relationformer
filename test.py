@@ -11,24 +11,11 @@ import numpy as np
 from dataset_road_network import build_road_network_data
 from models import build_model
 from inference import relation_infer
-# from metric_smd import StreetMoverDistance
+from metric_smd import StreetMoverDistance
 from metric_map import BBoxEvaluator
 from box_ops_2D import box_cxcywh_to_xyxy_np
 from utils import image_graph_collate_road_network
 from metrics.topo import compute_topo
-
-
-
-parser = ArgumentParser()
-parser.add_argument('config',
-                    default=None,
-                    help='config file (.yml) containing the hyper-parameters for training. '
-                         'If None, use the nnU-Net config. See /config for examples.')
-parser.add_argument('checkpoint', default=None, help='checkpoint of the model to test.')
-parser.add_argument('--device', default='cuda',
-                        help='device to use for training')
-parser.add_argument('--cuda_visible_device', nargs='*', type=int, default=[0,1],
-                        help='list of index where skip conn will be made.')
 
 
 class obj:
@@ -71,9 +58,6 @@ def test(args):
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.enabled = True
     torch.multiprocessing.set_sharing_strategy('file_system')
-    device = torch.device("cuda") if args.device=='cuda' else torch.device("cpu")
-
-    net = build_model(config).to(device)
 
     test_ds = build_road_network_data(
         config, mode='test'
@@ -81,20 +65,23 @@ def test(args):
 
     test_loader = DataLoader(test_ds,
                             batch_size=config.DATA.TEST_BATCH_SIZE,
-                            shuffle=True,
+                            shuffle=False,
                             num_workers=config.DATA.NUM_WORKERS,
                             collate_fn=image_graph_collate_road_network,
                             pin_memory=True)
 
+    model = build_model(config)
+    device = torch.device("cuda") # if args.device=='cuda' else torch.device("cpu")
+    model = model.to(device)
     # load checkpoint
+
     checkpoint = torch.load(args.checkpoint, map_location='cpu')
-    net.load_state_dict(checkpoint['model_state_dict'])
-    net.eval()
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
 
     # init metric
-    # metric = StreetMoverDistance(eps=1e-7, max_iter=100, reduction=MetricReduction.MEAN)
-    # metric_smd = StreetMoverDistance(eps=1e-5, max_iter=10, reduction='none')
-    # smd_results = []
+    metric_smd = StreetMoverDistance(eps=1e-5, max_iter=10, reduction='none')
+    smd_results = []
 
     metric_node_map = BBoxEvaluator(['node'], max_detections=100)
     metric_edge_map = BBoxEvaluator(['edge'], max_detections=100)
@@ -106,20 +93,20 @@ def test(args):
 
             # extract data and put to device
             images, segs, nodes, edges = batchdata[0], batchdata[1], batchdata[2], batchdata[3]
-            images = images.to(args.device,  non_blocking=False)
-            segs = segs.to(args.device,  non_blocking=False)
+            images = images.to(args.device)
+            segs = segs.to(args.device)
             nodes = [node.to(args.device,  non_blocking=False) for node in nodes]
             edges = [edge.to(args.device,  non_blocking=False) for edge in edges]
 
-            h, out, _ = net(images, seg=False)
+            h, out, _ = model(images, seg=True)
             pred_nodes, pred_edges, pred_nodes_box, pred_nodes_box_score, pred_nodes_box_class, pred_edges_box_score, pred_edges_box_class = relation_infer(
-                h.detach(), out, net.relation_embed, config.MODEL.DECODER.OBJ_TOKEN, config.MODEL.DECODER.RLN_TOKEN,
+                h.detach(), out, model.relation_embed, config.MODEL.DECODER.OBJ_TOKEN, config.MODEL.DECODER.RLN_TOKEN,
                 nms=False, map_=True
             )
 
-            # Add smd of current batch elem
-            # ret = metric_smd(nodes, edges, pred_nodes, pred_edges)
-            # smd_results += ret.tolist()
+            # shape of ret: [B]
+            ret = metric_smd(nodes, edges, pred_nodes, pred_edges)
+            smd_results += ret.tolist()
 
             # Add elements of current batch elem to node map evaluator
             metric_node_map.add(
@@ -155,60 +142,54 @@ def test(args):
                 topo_results.append(compute_topo(node_.cpu(), edge_.cpu(), pred_node_, pred_edge_))
     
     topo_array=np.array(topo_results)
-    print(topo_array.mean(0))
+    print(f"TOPO: {topo_array.mean(0)}")
     # Determine smd
-    # smd_mean = torch.tensor(smd_results).mean().item()
-    # smd_std = torch.tensor(smd_results).std().item()
-    # print(f'smd value: mean {smd_mean}, std {smd_std}\n')
+    smd_mean = torch.tensor(smd_results).mean().item()
+    smd_std = torch.tensor(smd_results).std().item()
+    print(f'smd value: mean {smd_mean}, std {smd_std}\n')
 
     # Determine node box ap / ar
     node_metric_scores = metric_node_map.eval()
     print(f"node mAP_IoU_0.50_0.95_0.05_MaxDet_100 {node_metric_scores['mAP_IoU_0.50_0.95_0.05_MaxDet_100']}")
-    print(f"node AP_IoU_0.10_MaxDet_100 {node_metric_scores['AP_IoU_0.10_MaxDet_100']}")
-    print(f"node AP_IoU_0.20_MaxDet_100 {node_metric_scores['AP_IoU_0.20_MaxDet_100']}")
-    print(f"node AP_IoU_0.30_MaxDet_100 {node_metric_scores['AP_IoU_0.30_MaxDet_100']}")
-    print(f"node AP_IoU_0.40_MaxDet_100 {node_metric_scores['AP_IoU_0.40_MaxDet_100']}")
     print(f"node AP_IoU_0.50_MaxDet_100 {node_metric_scores['AP_IoU_0.50_MaxDet_100']}")
     print(f"node AP_IoU_0.60_MaxDet_100 {node_metric_scores['AP_IoU_0.60_MaxDet_100']}")
-    print(f"node AP_IoU_0.70_MaxDet_100 {node_metric_scores['AP_IoU_0.70_MaxDet_100']}")
     print(f"node AP_IoU_0.80_MaxDet_100 {node_metric_scores['AP_IoU_0.80_MaxDet_100']}")
     print(f"node AP_IoU_0.90_MaxDet_100 {node_metric_scores['AP_IoU_0.90_MaxDet_100']}\n")
 
     print(f"node mAR_IoU_0.50_0.95_0.05_MaxDet_100 {node_metric_scores['mAR_IoU_0.50_0.95_0.05_MaxDet_100']}")
-    print(f"node AR_IoU_0.10_MaxDet_100 {node_metric_scores['AR_IoU_0.10_MaxDet_100']}")
-    print(f"node AR_IoU_0.20_MaxDet_100 {node_metric_scores['AR_IoU_0.20_MaxDet_100']}")
-    print(f"node AR_IoU_0.30_MaxDet_100 {node_metric_scores['AR_IoU_0.30_MaxDet_100']}")
-    print(f"node AR_IoU_0.40_MaxDet_100 {node_metric_scores['AR_IoU_0.40_MaxDet_100']}")
     print(f"node AR_IoU_0.50_MaxDet_100 {node_metric_scores['AR_IoU_0.50_MaxDet_100']}")
     print(f"node AR_IoU_0.60_MaxDet_100 {node_metric_scores['AR_IoU_0.60_MaxDet_100']}")
-    print(f"node AR_IoU_0.70_MaxDet_100 {node_metric_scores['AR_IoU_0.70_MaxDet_100']}")
     print(f"node AR_IoU_0.80_MaxDet_100 {node_metric_scores['AR_IoU_0.80_MaxDet_100']}")
     print(f"node AR_IoU_0.90_MaxDet_100 {node_metric_scores['AR_IoU_0.90_MaxDet_100']}\n")
 
     # Determine edge box ap / ar
     edge_metric_scores = metric_edge_map.eval()
     print(f"edge mAP_IoU_0.50_0.95_0.05_MaxDet_100 {edge_metric_scores['mAP_IoU_0.50_0.95_0.05_MaxDet_100']}")
-    print(f"edge AP_IoU_0.10_MaxDet_100 {edge_metric_scores['AP_IoU_0.10_MaxDet_100']}")
     print(f"edge AP_IoU_0.20_MaxDet_100 {edge_metric_scores['AP_IoU_0.20_MaxDet_100']}")
-    print(f"edge AP_IoU_0.30_MaxDet_100 {edge_metric_scores['AP_IoU_0.30_MaxDet_100']}")
-    print(f"edge AP_IoU_0.40_MaxDet_100 {edge_metric_scores['AP_IoU_0.40_MaxDet_100']}")
     print(f"edge AP_IoU_0.50_MaxDet_100 {edge_metric_scores['AP_IoU_0.50_MaxDet_100']}")
-    print(f"edge AP_IoU_0.60_MaxDet_100 {edge_metric_scores['AP_IoU_0.60_MaxDet_100']}")
-    print(f"edge AP_IoU_0.70_MaxDet_100 {edge_metric_scores['AP_IoU_0.70_MaxDet_100']}")
-    print(f"edge AP_IoU_0.80_MaxDet_100 {edge_metric_scores['AP_IoU_0.80_MaxDet_100']}")
-    print(f"edge AP_IoU_0.90_MaxDet_100 {edge_metric_scores['AP_IoU_0.90_MaxDet_100']}\n")
+    print(f"edge AP_IoU_0.80_MaxDet_100 {edge_metric_scores['AP_IoU_0.80_MaxDet_100']}\n")
 
     print(f"edge mAR_IoU_0.50_0.95_0.05_MaxDet_100 {edge_metric_scores['mAR_IoU_0.50_0.95_0.05_MaxDet_100']}")
-    print(f"edge AR_IoU_0.10_MaxDet_100 {edge_metric_scores['AR_IoU_0.10_MaxDet_100']}")
     print(f"edge AR_IoU_0.20_MaxDet_100 {edge_metric_scores['AR_IoU_0.20_MaxDet_100']}")
-    print(f"edge AR_IoU_0.30_MaxDet_100 {edge_metric_scores['AR_IoU_0.30_MaxDet_100']}")
-    print(f"edge AR_IoU_0.40_MaxDet_100 {edge_metric_scores['AR_IoU_0.40_MaxDet_100']}")
     print(f"edge AR_IoU_0.50_MaxDet_100 {edge_metric_scores['AR_IoU_0.50_MaxDet_100']}")
-    print(f"edge AR_IoU_0.60_MaxDet_100 {edge_metric_scores['AR_IoU_0.60_MaxDet_100']}")
-    print(f"edge AR_IoU_0.70_MaxDet_100 {edge_metric_scores['AR_IoU_0.70_MaxDet_100']}")
-    print(f"edge AR_IoU_0.80_MaxDet_100 {edge_metric_scores['AR_IoU_0.80_MaxDet_100']}")
-    print(f"edge AR_IoU_0.90_MaxDet_100 {edge_metric_scores['AR_IoU_0.90_MaxDet_100']}\n")
+    print(f"edge AR_IoU_0.80_MaxDet_100 {edge_metric_scores['AR_IoU_0.80_MaxDet_100']}\n")
+
+
+def parse_args():
+    parser = ArgumentParser()
+    parser.add_argument('config',
+                        default=None,
+                        help='config file (.yml) containing the hyper-parameters for training. '
+                            'If None, use the nnU-Net config. See /config for examples.')
+    parser.add_argument('checkpoint', default=None, help='checkpoint of the model to test.')
+    parser.add_argument('--device', default='cuda',
+                            help='device to use for training')
+    parser.add_argument('--cuda_visible_device', nargs='*', type=int, default=[0,1],
+                            help='list of index where skip conn will be made.')
+    args = parser.parse_args()
+    return args
+
 
 if __name__ == '__main__':
-    args = parser.parse_args()
+    args = parse_args()
     test(args)

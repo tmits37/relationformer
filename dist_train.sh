@@ -23,5 +23,4 @@ cd /nas/k8s/dev/research/doyoungi/git/relationformer
 
 python3 -m torch.distributed.launch \
     --nproc_per_node=$GPUS \
-    train.py \
-    --config $CONFIG \
+    train.py $CONFIG \

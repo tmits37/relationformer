@@ -48,7 +48,8 @@ def train_epoch(model,
                 writer.add_scalar('Train/Loss/class', losses['class'].item(), iters)
                 writer.add_scalar('Train/Loss/nodes', losses['nodes'].item(), iters)
                 writer.add_scalar('Train/Loss/boxes', losses['boxes'].item(), iters)
-                writer.add_scalar('Train/Loss/edges', losses['edges'].item(), iters)
+
+                # writer.add_scalar('Train/Loss/edges', losses['edges'].item(), iters)
 
                 if loss_fn.seg:
                     writer.add_scalar('Train/Loss/segs', losses['segs'].item(), iters)
@@ -89,13 +90,13 @@ def validate_epoch(
             edges = [edge.to(device) for edge in edges]
 
             h, out, srcs = model(images)
-            pred_nodes, pred_edges = relation_infer(
-                h.detach(), 
-                out, 
-                relation_embed, 
-                config.MODEL.DECODER.OBJ_TOKEN, 
-                config.MODEL.DECODER.RLN_TOKEN
-            )
+            # pred_nodes, pred_edges = relation_infer(
+            #     h.detach(), 
+            #     out, 
+            #     relation_embed, 
+            #     config.MODEL.DECODER.OBJ_TOKEN, 
+            #     config.MODEL.DECODER.RLN_TOKEN
+            # )
             losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges, 'segs':seg})
             loss = losses['total']
             total_loss += loss.item()
@@ -106,7 +107,9 @@ def validate_epoch(
                 writer.add_scalar('Val/Loss/class', losses['class'].item(), iters)
                 writer.add_scalar('Val/Loss/nodes', losses['nodes'].item(), iters)
                 writer.add_scalar('Val/Loss/boxes', losses['boxes'].item(), iters)
-                writer.add_scalar('Val/Loss/edges', losses['edges'].item(), iters)
+
+                if config.MODEL.DECODER.RLN_TOKEN > 0:
+                    writer.add_scalar('Val/Loss/edges', losses['edges'].item(), iters)
 
                 if loss_fn.seg:
                     writer.add_scalar('Val/Loss/segs', losses['segs'].item(), iters)
