@@ -91,6 +91,10 @@ def relation_infer(h, out, relation_embed, obj_token, rln_token, nms=False, map_
                 relation_feature1  = torch.cat((object_token[batch_id,node_pairs[0],:], object_token[batch_id,node_pairs[1],:]), 1)
                 relation_feature2  = torch.cat((object_token[batch_id,node_pairs[1],:], object_token[batch_id,node_pairs[0],:]), 1)
 
+            if not relation_embed:
+                pred_edges.append(np.array([[0,0]]))
+                continue
+
             relation_pred1 = relation_embed(relation_feature1).detach()
             relation_pred2 = relation_embed(relation_feature2).detach()
             relation_pred = (relation_pred1+relation_pred2)/2.0
@@ -311,17 +315,28 @@ if __name__ == "__main__":
             os.makedirs(show_dir + "/graph")
         print("The path is already ready.")
 
+    if config.MODEL.SEG:
+        os.makedirs(show_dir + "/seg_pred", exist_ok=True)
+
     iteration = 0
     for idx, (images, seg, points, edges) in enumerate(tqdm(val_loader, total=len(val_loader))):
         iteration = iteration+1
         images = images.cuda()
 
         seg = seg.cuda()
-        h, out, _ = model(images, seg=False)
+        h, out, _ = model(images, seg=False) # seg=False
         pred_nodes, pred_edges, pred_nodes_box, pred_nodes_box_score, pred_nodes_box_class, pred_edges_box_score, pred_edges_box_class = relation_infer(
                     h.detach(), out, model.relation_embed, config.MODEL.DECODER.OBJ_TOKEN, config.MODEL.DECODER.RLN_TOKEN,
                     nms=False, map_=True
                     )
+        
+        if config.MODEL.SEG:
+            seg_logit = out['pred_segs'] # B, 2, H, W
+            seg_pred = seg_logit.argmax(dim=1)
+            seg_pred = seg_pred.cpu().numpy()
+
+            # unravel batch dim
+            seg_preds = list(seg_pred)            
 
         start_idx = idx*config.DATA.BATCH_SIZE
         for i in range(len(images)): # 0~31
@@ -366,5 +381,10 @@ if __name__ == "__main__":
             with open(f'{show_dir}/graph/{file_name}.json', 'w') as json_file:
                 json.dump(data, json_file, indent=2)
 
-
-
+            if config.MODEL.SEG:
+                seg_pred = seg_preds[i]
+                seg_pred = seg_pred * 255
+                seg_pred = seg_pred.astype('uint8')
+                seg_pred = Image.fromarray(seg_pred)
+                seg_pred.save(f'{show_dir}/seg_pred/{file_name}.png')
+            

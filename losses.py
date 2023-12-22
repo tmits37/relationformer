@@ -3,6 +3,7 @@ import torch.nn.functional as F
 from torch import nn
 import box_ops_2D
 import numpy as np
+import copy
 
 from mmseg.models import build_loss
 
@@ -76,12 +77,19 @@ class SetCriterion(nn.Module):
         self.obj_token = config.MODEL.DECODER.OBJ_TOKEN
         self.losses = config.TRAIN.LOSSES
         self.seg = config.MODEL.SEG
+        self.two_stage = config.MODEL.DECODER.TWO_STAGE
+
         self.weight_dict = {'boxes':config.TRAIN.W_BBOX,
                             'class':config.TRAIN.W_CLASS,
                             'cards':config.TRAIN.W_CARD,
                             'nodes':config.TRAIN.W_NODE,
-                            'edges':config.TRAIN.W_EDGE,
                             }
+        self.num_edges = config.TRAIN.NUM_EDGES # Default value: 80
+        self.max_pos_edges = int(self.num_edges // 2)
+
+        if self.rln_token:
+            self.weight_dict['edges'] = config.TRAIN.W_EDGE
+
         if self.seg:
             self.weight_dict['segs'] = 5.0
             self.losses.append('segs')
@@ -94,6 +102,17 @@ class SetCriterion(nn.Module):
             #     avg_non_ignore=False,
             #     loss_name='loss_ce')
             # self.ce_loss = build_loss(loss_cls_cfg)
+        if self.two_stage:
+            weights = [1, 1, 1]
+            for i, loss in enumerate(['class', 'boxes', 'cards']):
+                self.weight_dict[f'{loss}_enc'] = weights[i]
+                self.losses.append(f'{loss}_enc')
+            print("You WILL calculate additional two-stage loss")
+            print(self.weight_dict)
+
+        self.edge_descriptors = config.MODEL.EDGE_DESCRIPTORS
+        if self.edge_descriptors:
+            print("edge_descriptor_losses")
 
     def loss_segs(self, outputs, labels):
         labels = labels.squeeze(1)
@@ -179,7 +198,7 @@ class SetCriterion(nn.Module):
         loss = loss.sum() / num_boxes
         return loss
 
-    def loss_edges(self, h, target_nodes, target_edges, indices, num_edges=80):
+    def loss_edges(self, h, target_nodes, target_edges, indices, edge_descriptors=None):
         """Compute the losses related to the masks: the focal loss and the dice loss.
            targets dicts must contain the key "masks" containing a tensor of dim [nb_target_boxes, h, w]
         """
@@ -192,9 +211,12 @@ class SetCriterion(nn.Module):
             relation_token = h[..., self.obj_token:self.rln_token+self.obj_token, :]
 
         # map the ground truth edge indices by the matcher ordering
+        # First line means the edge informations in the GT edges, [Node Num_1, Node Num_2]
         target_edges = [[t for t in tgt if t[0].cpu() in i and t[1].cpu() in i] for tgt, (_, i) in zip(target_edges, indices)]
         target_edges = [torch.stack(t, 0) if len(t)>0 else torch.zeros((0,2), dtype=torch.long).to(h.device) for t in target_edges]
 
+        # Convert the node number of target_edges into the matched 
+        # node number by Sinkhorn Algorithm
         new_target_edges = []
         for t, (_, i) in zip(target_edges, indices):
             tx = t.clone().detach()
@@ -217,40 +239,55 @@ class SetCriterion(nn.Module):
             full_adj[pos_edge[:,0],pos_edge[:,1]]=0
             full_adj[pos_edge[:,1],pos_edge[:,0]]=0
             neg_edges = torch.nonzero(torch.triu(full_adj))
+
+            # Shuffling 1: 50% pos edge
             # shuffle edges for undirected edge
+            # 아하, 이부분은 50%의 확률로 랜덤하게 edge node 연결 방향을 반대로 바꿔즌는 코드이다. 
             shuffle = np.random.randn((pos_edge.shape[0]))>0
             to_shuffle = pos_edge[shuffle,:]
             pos_edge[shuffle,:] = to_shuffle[:,[1, 0]]
 
-            # restrict unbalance in the +ve/-ve edge
-            if pos_edge.shape[0]>40:
-                # print('Reshaping')
-                pos_edge = pos_edge[:40,:]
-            
-            # random sample -ve edge
+            # Shuffling 2: Shuffling the sequence of neg_edges 
+            # torch.randperm: Returns a random permutation of integers from 0 to n - 1
             idx_ = torch.randperm(neg_edges.shape[0])
             neg_edges = neg_edges[idx_, :].to(pos_edge.device)
 
-            # shuffle edges for undirected edge
+            # Shuffling 3: 50% neg edge
+            # 이부분은 50%의 확률로 랜덤하게 edge node 연결 방향을 반대로 바꿔즌는 코드이다. 
             shuffle = np.random.randn((neg_edges.shape[0]))>0
             to_shuffle = neg_edges[shuffle,:]
             neg_edges[shuffle,:] = to_shuffle[:,[1, 0]]
 
+            # restrict unbalance in the +ve/-ve edge
+            # some reason, maximum number of the pos_edge is set to 40
+            if pos_edge.shape[0]>self.max_pos_edges:
+                pos_edge = pos_edge[:self.max_pos_edges,:]
+
             # check whether the number of -ve edges are within limit 
-            if num_edges-pos_edge.shape[0]<neg_edges.shape[0]:
-                take_neg = num_edges-pos_edge.shape[0]
-                total_edge = num_edges
+            if self.num_edges-pos_edge.shape[0]<neg_edges.shape[0]:
+                take_neg = self.num_edges-pos_edge.shape[0]
+                total_edge = self.num_edges
             else:
                 take_neg = neg_edges.shape[0]
                 total_edge = pos_edge.shape[0]+neg_edges.shape[0]
+
+            # if, the num. of pos_edge = 40, neg_edgs = 250 -> select 40, 88
+            # elif the num. of pos_edge = 5, neg_edgs = 12 -> select 5, 12
             all_edges_ = torch.cat((pos_edge, neg_edges[:take_neg]), 0)
             # all_edges.append(all_edges_)
             edge_labels.append(torch.cat((torch.ones(pos_edge.shape[0], dtype=torch.long), torch.zeros(take_neg, dtype=torch.long)), 0))
 
-            if self.rln_token > 0:
-                relation_feature.append(torch.cat((rearranged_object_token[all_edges_[:,0],:],rearranged_object_token[all_edges_[:,1],:],relation_token[batch_id,...].repeat(total_edge,1)), 1))
+            if self.edge_descriptors:
+                rearranged_edge_descriptors = edge_descriptors[batch_id, indices[batch_id][0].unsqueeze(1),indices[batch_id][0].unsqueeze(0), :]
+                relation_feature.append(torch.cat((
+                    rearranged_object_token[all_edges_[:,0],:], 
+                    rearranged_object_token[all_edges_[:,1],:],
+                    rearranged_edge_descriptors[all_edges_[:,0], all_edges_[:,1]]), 1))
             else:
-                relation_feature.append(torch.cat((rearranged_object_token[all_edges_[:,0],:],rearranged_object_token[all_edges_[:,1],:]), 1))
+                if self.rln_token > 0:
+                    relation_feature.append(torch.cat((rearranged_object_token[all_edges_[:,0],:],rearranged_object_token[all_edges_[:,1],:],relation_token[batch_id,...].repeat(total_edge,1)), 1))
+                else:
+                    relation_feature.append(torch.cat((rearranged_object_token[all_edges_[:,0],:],rearranged_object_token[all_edges_[:,1],:]), 1))
 
         # [print(e,l) for e,l in zip(all_edges, edge_labels)]
         # torch.tensor(list(itertools.combinations(range(n.shape[0]), 2))).to(e.get_device())
@@ -262,14 +299,9 @@ class SetCriterion(nn.Module):
         else: # for single gpu usage
             relation_pred = self.net.relation_embed(relation_feature)
 
-        # relation_pred = self.relation_embed(relation_feature)
-
-        # valid_edges = torch.argmax(relation_pred, -1)
-        # print('valid_edge number', valid_edges.sum())
         loss = F.cross_entropy(relation_pred, edge_labels, reduction='mean')
-
-
         return loss
+
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
@@ -298,11 +330,38 @@ class SetCriterion(nn.Module):
         losses['class'] = self.loss_class(out['pred_logits'], indices)
         losses['nodes'] = self.loss_nodes(out['pred_nodes'][...,:2], target['nodes'], indices)
         losses['boxes'] = self.loss_boxes(out['pred_nodes'], target['nodes'], indices)
-        losses['edges'] = self.loss_edges(h, target['nodes'], target['edges'], indices)
         losses['cards'] = self.loss_cardinality(out['pred_logits'], indices)
+
+        if self.rln_token > 0:
+            if self.edge_descriptors:
+                losses['edges'] = self.loss_edges(h, target['nodes'], target['edges'], indices, out['edge_descriptors'])
+            else:
+                losses['edges'] = self.loss_edges(h, target['nodes'], target['edges'], indices, None)
 
         if self.seg:
             losses['segs'] = self.loss_segs(out['pred_segs'], target['segs'])
+
+        if 'enc_outputs' in out:
+            enc_outputs = out['enc_outputs']
+            bin_targets = copy.deepcopy(target)
+            # for bt in bin_targets:
+            #     bt['labels'] = torch.zeros_like(bt['labels'])
+            indices = self.matcher(enc_outputs, bin_targets)
+
+            # [labels, cardinality, boxes, masks]
+            # for loss in ['class', 'boxes', 'cards']:
+                # if loss == 'masks':
+                #     # Intermediate masks losses are too costly to compute, we ignore them.
+                #     continue
+                # kwargs = {}
+                # if loss == 'labels':
+                #     # Logging is enabled only for the last layer
+                #     kwargs['log'] = False
+                # l_dict = self.get_loss(loss, enc_outputs, bin_targets, indices, num_boxes, **kwargs)
+            losses['class_enc'] = self.loss_class(enc_outputs['pred_logits'], indices)
+            losses['boxes_enc'] = self.loss_boxes(enc_outputs['pred_nodes'], target['nodes'], indices)
+            losses['cards_enc'] = self.loss_cardinality(enc_outputs['pred_logits'], indices)
+
         losses['total'] = sum([losses[key]*self.weight_dict[key] for key in self.losses])
 
         return losses

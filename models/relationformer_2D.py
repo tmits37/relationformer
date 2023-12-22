@@ -21,10 +21,10 @@ class RelationEmbed(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        if config.MODEL.DECODER.RLN_TOKEN > 0:
-            self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*3, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
-        else:
-            self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*2, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
+        # if config.MODEL.DECODER.RLN_TOKEN > 0:
+        #     self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*3, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
+        # else:
+        self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*2, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
     def forward(self, x):
         x = self.relation_embed(x)
         return x
@@ -52,16 +52,23 @@ class RelationFormer(nn.Module):
         self.with_box_refine = config.MODEL.DECODER.WITH_BOX_REFINE
         self.num_classes = config.MODEL.NUM_CLASSES
 
+        # input_dim, hidden_dim, output_dim, num_layers
         self.class_embed = nn.Linear(config.MODEL.DECODER.HIDDEN_DIM, 2)
         self.bbox_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM, config.MODEL.DECODER.HIDDEN_DIM, 4, 3)
         
         if config.MODEL.DECODER.RLN_TOKEN > 0:
             self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*3, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
+            self.relation_embed_dim = config.MODEL.DECODER.HIDDEN_DIM*3
         else:
-            self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*2, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
+            # self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*3, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
+            # self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*2, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
+            self.relation_embed = None
 
         if not self.two_stage:
             self.query_embed = nn.Embedding(self.num_queries, self.hidden_dim*2)    # why *2
+        else:
+            self.query_embed = nn.Embedding(config.MODEL.DECODER.RLN_TOKEN, self.hidden_dim*2)
+
         if self.num_feature_levels > 1:
             num_backbone_outs = len(self.encoder.strides)
             input_proj_list = []
@@ -85,25 +92,60 @@ class RelationFormer(nn.Module):
                     nn.GroupNorm(32, self.hidden_dim),
                 )])
 
+
         self.decoder.decoder.bbox_embed = None
+
+        if self.two_stage:
+            num_pred = (decoder.decoder.num_layers + 1) if self.two_stage else decoder.decoder.num_layers
+
+            self.class_embed = _get_clones(self.class_embed, num_pred)
+            self.bbox_embed = _get_clones(self.bbox_embed, num_pred)
+            nn.init.constant_(self.bbox_embed[0].layers[-1].bias.data[2:], -2.0)
+            # hack implementation for iterative bounding box refinement
+            self.decoder.decoder.bbox_embed = self.bbox_embed
+
+            self.decoder.decoder.class_embed = self.class_embed
+            for box_embed in self.bbox_embed:
+                nn.init.constant_(box_embed.layers[-1].bias.data[2:], 0.0)
+
         self.seg = config.MODEL.SEG
         if self.seg:
             self.aux_fpn_head = NestedFCNHead(origin_shape=config.DATA.IMG_SIZE)
 
-    def forward(self, samples):
-        samples = nested_tensor_from_tensor_list([tensor.expand(3, -1, -1).contiguous() for tensor in samples])
+        self.edge_descriptors = config.MODEL.EDGE_DESCRIPTORS
+        if self.edge_descriptors:
+            print("you are now using edge descriptors")
+            self.num_samples = 4
+            self.mlp_edge = self._build_mlp(
+                input_dim=int(config.MODEL.DECODER.HIDDEN_DIM * self.num_samples),  # Concatenation of descriptors from two vertices
+                hidden_layers=[config.MODEL.DECODER.HIDDEN_DIM*1],
+                output_dim=config.MODEL.DECODER.HIDDEN_DIM
+            )
 
+
+    def forward(self, samples, seg=True):
+
+        if not seg and not isinstance(samples, NestedTensor):
+            # When inferencing
+            samples = nested_tensor_from_tensor_list(samples)
+        elif seg:
+            # When training
+            samples = nested_tensor_from_tensor_list([tensor.expand(3, -1, -1).contiguous() for tensor in samples])
+
+        # These below code are exactly same as Deformable DETR's
         features, pos = self.encoder(samples)
 
-        # Create 
         srcs = []
         masks = []
         for l, feat in enumerate(features):
-            src, mask = feat.decompose()
+            src, mask = feat.decompose() 
             srcs.append(self.input_proj[l](src))
             masks.append(mask)
             assert mask is not None
 
+        # self.num_feature_levels = 4, len(srcs) = 3
+        # Generally, self.num_feature_levles = len(srcs) = 4
+        # This is the hyperparmeter of the encoder; Conv + Downsampling
         if self.num_feature_levels > len(srcs):
             _len_srcs = len(srcs)
             for l in range(_len_srcs, self.num_feature_levels):
@@ -121,25 +163,134 @@ class RelationFormer(nn.Module):
         query_embeds = None
         if not self.two_stage:
             query_embeds = self.query_embed.weight
+        else:
+            query_embeds = self.query_embed.weight
     
-        hs, init_reference, inter_references, _, _ = self.decoder(
+        hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = self.decoder(
             srcs, masks, query_embeds, pos
         )
 
+        # below code are different from Deformable DETR's
         object_token = hs[...,:self.obj_token,:]
-        hs = hs + torch.mm(self.relation_embed(torch.zeros((1, 1536), device=hs.device)), torch.zeros((2,1), device=hs.device))
+        # For including the gradient propagation in this forward function
+        if self.relation_embed:
+            # hs = hs + 0 * relation_embed
+            hs = hs + torch.mm(self.relation_embed(torch.zeros((1, self.relation_embed_dim), device=hs.device)), torch.zeros((2,1), device=hs.device))
 
-        class_prob = self.class_embed(object_token)
-        coord_loc = self.bbox_embed(object_token).sigmoid()
+        if self.two_stage:
+            outputs_classes = []
+            outputs_coords = []
+            for lvl in range(hs.shape[0]):
+                if lvl == 0:
+                    reference = init_reference
+                else:
+                    reference = inter_references[lvl - 1]
+                reference = inverse_sigmoid(reference)
+                outputs_class = self.class_embed[lvl](hs[lvl][:,:self.obj_token,:])
+                tmp = self.bbox_embed[lvl](hs[lvl][:,:self.obj_token,:])
+                if reference.shape[-1] == 4:
+                    tmp += reference
+                else:
+                    assert reference.shape[-1] == 2
+                    tmp[..., :2] += reference
+                outputs_coord = tmp.sigmoid()
+                outputs_classes.append(outputs_class)
+                outputs_coords.append(outputs_coord)
+            class_prob = torch.stack(outputs_classes)
+            coord_loc = torch.stack(outputs_coords)
+
+            class_prob = class_prob[-1]
+            coord_loc = coord_loc[-1]
+            hs = hs[-1]
+
+        else:
+            class_prob = self.class_embed(object_token) # same from DETR's, Reliability of the obj. [B, OBJ_TOKENS, 2]
+            coord_loc = self.bbox_embed(object_token).sigmoid() # same from DETR's, [B, OBJ_TOKENS, 4]
+
+        if self.edge_descriptors:
+            edge_descriptors = self.sample_descriptors(features[0].decompose()[0], coord_loc[:,:,:2])
+        
 
         # Auxiliary Head
+        # Normalliy, hs, class_prob, coord_loc: [B, OBJ_TOKENS+1, D], [B, OBJ_TOKENS, 2], [B, OBJ_TOKENS, 4]
         if self.seg:
             # torch.Size([256, 512, 16, 16]) torch.Size([256, 1024, 8, 8]) torch.Size([256, 2048, 4, 4])
             seg_logits = self.aux_fpn_head(features)
             out = {'pred_logits': class_prob, 'pred_nodes': coord_loc, 'pred_segs': seg_logits}
         else:
             out = {'pred_logits': class_prob, 'pred_nodes': coord_loc}
+
+        if self.two_stage:
+            enc_outputs_coord = enc_outputs_coord_unact.sigmoid()
+            out['enc_outputs'] = {'pred_logits': enc_outputs_class, 'pred_nodes': enc_outputs_coord}
+
+        if self.edge_descriptors:
+            out['edge_descriptors'] = edge_descriptors
+
         return hs, out, srcs
+    
+    def _build_mlp(self, input_dim, hidden_layers, output_dim):
+        layers = [nn.Linear(input_dim, hidden_layers[0]), nn.ReLU()]
+        for i in range(1, len(hidden_layers)):
+            layers.append(nn.Linear(hidden_layers[i-1], hidden_layers[i]))
+            layers.append(nn.ReLU())
+        layers.append(nn.Linear(hidden_layers[-1], output_dim))
+        return nn.Sequential(*layers)
+
+    def sample_descriptors(self, feature_map, vertex_positions):
+        B, N, _ = vertex_positions.size()
+        _, D, H, W = feature_map.size()
+
+        feature_map = feature_map # [B, D, H, W]
+        # vertex_positions: [0,1)
+        init_vertex_positions = vertex_positions * torch.tensor([[H -1, W - 1]], device=feature_map.device)
+        
+        # Normalize vertex positions to [-1, 1] for grid_sample)
+        vertex_positions_normalized = init_vertex_positions.float() / torch.tensor([[H - 1, W - 1]], device=feature_map.device) * 2 - 1
+
+        # Create all pairs of vertices (B, N, N, 2)
+        start_positions = vertex_positions_normalized.unsqueeze(2).unsqueeze(-1)  # Shape: [B, N, 1, 2, 1]
+        end_positions = vertex_positions_normalized.unsqueeze(1).unsqueeze(-1)  # Shape: [B, 1, N, 2, 1]
+
+        # Compute linearly spaced points between each pair of vertices
+        # For simplicity, let's sample 2 points on the line between vertex pairs
+        steps = torch.linspace(0, 1, steps=self.num_samples, device=feature_map.device).view(1, 1, 1, 1, self.num_samples)  # Shape: [1, 1, 1, 1, num_samples]
+
+        # # Linear combination to find the interpolated positions
+        interpolated_positions = (1 - steps) * start_positions + steps * end_positions  # Shape: [B, N, N, 2,num_samples]
+
+        # Reshape interpolated positions for grid_sample
+        # Flatten N, N, and num_samples dimensions
+        interpolated_positions = interpolated_positions.view(B, N*N*self.num_samples, 1, 2)
+
+        # Sample descriptors using grid_sample
+        sampled_descriptors = F.grid_sample(feature_map, interpolated_positions, mode='bilinear', align_corners=True)
+
+        # Reshape the sampled descriptors to match the MLP input
+        # B, D, (N*N*num_samples), 1 -> B, N*N, num_samples * D
+        sampled_descriptors = sampled_descriptors.squeeze(3)  # Remove the last dimension
+        sampled_descriptors = sampled_descriptors.view(B, D, N*N, self.num_samples)
+        sampled_descriptors = sampled_descriptors.permute(0, 2, 1, 3).reshape(B, N*N, D*self.num_samples)
+
+        # Mask to select unique edge pairs (upper triangle excluding diagonal)
+        mask = torch.triu(torch.ones(N, N, device=feature_map.device), diagonal=1).bool()
+        mask_flat = mask.view(-1)  # Flatten mask for indexing
+
+        # Apply MLP only on unique pairs
+        sampled_descriptors_unique = self.mlp_edge(sampled_descriptors[:, mask_flat])
+
+        # Create a complete N x N matrix for all edge descriptors
+        edge_descriptors = torch.zeros(B, N*N, sampled_descriptors_unique.size(-1), device=feature_map.device)
+        edge_descriptors[:, mask_flat] = sampled_descriptors_unique
+
+        # Copy descriptors to reverse edges
+        reverse_mask_flat = mask.t().contiguous().view(-1)
+        edge_descriptors[:, reverse_mask_flat] = sampled_descriptors_unique
+
+        # Reshape to [B, N, N, ...]
+        edge_descriptors = edge_descriptors.view(B, N, N, -1) # [B, N, N, D]
+
+        return edge_descriptors
 
 
 class MLP(nn.Module):

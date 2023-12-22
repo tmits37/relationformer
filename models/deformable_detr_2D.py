@@ -35,7 +35,7 @@ class DeformableTransformer(nn.Module):
                 enc_n_points=4,
                 two_stage=False,
                 rln_attn=False,
-                two_stage_num_proposals=300):
+                two_stage_num_proposals=128):
         super().__init__()
 
         self.d_model = d_model
@@ -50,7 +50,8 @@ class DeformableTransformer(nn.Module):
 
         decoder_layer = DeformableTransformerDecoderLayer(d_model, dim_feedforward,
                                                           dropout, activation,
-                                                          num_feature_levels, nhead, dec_n_points, rln_attn)
+                                                          num_feature_levels, nhead, dec_n_points, 
+                                                          rln_attn, two_stage=two_stage)
         self.decoder = DeformableTransformerDecoder(decoder_layer, num_decoder_layers, return_intermediate_dec)
 
         self.level_embed = nn.Parameter(torch.Tensor(num_feature_levels, d_model))
@@ -58,7 +59,9 @@ class DeformableTransformer(nn.Module):
         if two_stage:
             self.enc_output = nn.Linear(d_model, d_model)
             self.enc_output_norm = nn.LayerNorm(d_model)
-            self.pos_trans = nn.Linear(d_model * 2, d_model * 2)
+            # self.pos_trans = nn.Linear(d_model * 2, d_model * 2)
+            # self.pos_trans_norm = nn.LayerNorm(d_model * 2)
+            self.pos_trans = nn.Linear(d_model, d_model * 2)
             self.pos_trans_norm = nn.LayerNorm(d_model * 2)
         else:
             self.reference_points = nn.Linear(d_model, 2)
@@ -168,22 +171,38 @@ class DeformableTransformer(nn.Module):
         # prepare input for decoder
         bs, _, c = memory.shape
         if self.two_stage:
+            rln_token = query_embed # [1,2*D]
+            rln_query_embed, tgt_rln_token = torch.split(rln_token, c, dim=1)
+            rln_query_embed = rln_query_embed.unsqueeze(0).expand(bs, -1, -1)
+            tgt_rln_token = tgt_rln_token.unsqueeze(0).expand(bs, -1, -1)
+
             output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
 
             # hack implementation for two-stage Deformable DETR
+            # self.decoder.num_layers = 4
+            # output_memory.shape = [B, 340, D]
+            # self.decoder.class_embed = None
+            # When tryed self.decoder.class_embed(output_memory), its results shape is [B, 340, 2]
+            # output_proposals's [B, 340, 4]
+
             enc_outputs_class = self.decoder.class_embed[self.decoder.num_layers](output_memory)
+
             enc_outputs_coord_unact = self.decoder.bbox_embed[self.decoder.num_layers](output_memory) + output_proposals
 
             topk = self.two_stage_num_proposals
             topk_proposals = torch.topk(enc_outputs_class[..., 0], topk, dim=1)[1]
-            topk_coords_unact = torch.gather(enc_outputs_coord_unact, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, 4))
+            topk_coords_unact = torch.gather(enc_outputs_coord_unact, 1, topk_proposals.unsqueeze(-1).repeat(1, 1, 4)) # [B, topk, 4]
             topk_coords_unact = topk_coords_unact.detach()
             reference_points = topk_coords_unact.sigmoid()
-            init_reference_out = reference_points
+            init_reference_out = reference_points 
+            # [B, 300, 4] -> [B, 300, D]
             pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
-            query_embed, tgt = torch.split(pos_trans_out, c, dim=2)
+            query_embed, tgt = torch.split(pos_trans_out, c, dim=2) # [B, topk, D], [B, topk, D]
+
+            query_embed = torch.cat([query_embed, rln_query_embed], dim=1)
+            tgt = torch.cat([tgt, tgt_rln_token], dim=1)
         else:
-            query_embed, tgt = torch.split(query_embed, c, dim=1)
+            query_embed, tgt = torch.split(query_embed, c, dim=1) 
             query_embed = query_embed.unsqueeze(0).expand(bs, -1, -1)
             tgt = tgt.unsqueeze(0).expand(bs, -1, -1)
             reference_points = self.reference_points(query_embed).sigmoid()
@@ -275,9 +294,11 @@ class DeformableTransformerEncoder(nn.Module):
 class DeformableTransformerDecoderLayer(nn.Module):
     def __init__(self, d_model=256, d_ffn=1024,
                  dropout=0.1, activation="relu",
-                 n_levels=4, n_heads=8, n_points=4, rln_attn=False):
+                 n_levels=4, n_heads=8, n_points=4, 
+                 rln_attn=False, two_stage=False):
         super().__init__()
         self.rln_attn = rln_attn
+        self.two_stage = two_stage
 
         # cross attention - avoid sparse attn for rln token
         if self.rln_attn:
@@ -330,9 +351,14 @@ class DeformableTransformerDecoderLayer(nn.Module):
         if self.rln_attn:
             tgt_obj = tgt[:,:-1,:]
             tgt_rln = tgt[:,-1:,:]
-            tgt2 = self.cross_attn1(self.with_pos_embed(tgt_obj, query_pos[:,:-1,:]),
-                    reference_points[:,:-1,:],
-                    src, src_spatial_shapes, level_start_index, src_padding_mask)
+            if self.two_stage:
+                tgt2 = self.cross_attn1(self.with_pos_embed(tgt_obj, query_pos[:,:-1,:]),
+                        reference_points,
+                        src, src_spatial_shapes, level_start_index, src_padding_mask)
+            else:
+                tgt2 = self.cross_attn1(self.with_pos_embed(tgt_obj, query_pos[:,:-1,:]),
+                        reference_points[:,:-1,:],
+                        src, src_spatial_shapes, level_start_index, src_padding_mask)
             tgt_obj = tgt_obj + self.dropout11(tgt2)
             tgt_obj = self.norm11(tgt_obj)
             # tgt2 = self.cross_attn2(query=self.with_pos_embed(tgt_rln, query_pos[:,-1:,:]).transpose(0, 1),
@@ -384,12 +410,12 @@ class DeformableTransformerDecoder(nn.Module):
             if self.bbox_embed is not None:
                 tmp = self.bbox_embed[lid](output)
                 if reference_points.shape[-1] == 4:
-                    new_reference_points = tmp + inverse_sigmoid(reference_points)
+                    new_reference_points = tmp[:,:-1, :] + inverse_sigmoid(reference_points)
                     new_reference_points = new_reference_points.sigmoid()
                 else:
                     assert reference_points.shape[-1] == 2
                     new_reference_points = tmp
-                    new_reference_points[..., :2] = tmp[..., :2] + inverse_sigmoid(reference_points)
+                    new_reference_points[..., :2] = tmp[..., :2][:,:-1, :] + inverse_sigmoid(reference_points)
                     new_reference_points = new_reference_points.sigmoid()
                 reference_points = new_reference_points.detach()
 
@@ -427,7 +453,8 @@ def build_deforamble_transformer(config):
         dim_feedforward=config.MODEL.DECODER.DIM_FEEDFORWARD,
         dropout=config.MODEL.DECODER.DROPOUT,
         activation=config.MODEL.DECODER.ACTIVATION,
-        return_intermediate_dec=False,
+        return_intermediate_dec=config.MODEL.DECODER.TWO_STAGE,
         num_feature_levels=config.MODEL.DECODER.NUM_FEATURE_LEVELS,
+        two_stage=config.MODEL.DECODER.TWO_STAGE,
         rln_attn=config.MODEL.DECODER.RLN_ATTN
     )

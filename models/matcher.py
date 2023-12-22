@@ -41,13 +41,13 @@ class HungarianMatcher(nn.Module):
         bs, num_queries = outputs['pred_nodes'].shape[:2]
 
         # We flatten to compute the cost matrices in a batch
-        out_nodes = outputs['pred_nodes'][...,:2].flatten(0, 1)  # [batch_size * num_queries, 2]
+        out_nodes = outputs['pred_nodes'][...,:2].flatten(0, 1)  # [batch_size * num_queries, 4] -> [batch_size * num_queries, 2]
 
         # Also concat the target labels and boxes
-        tgt_nodes = torch.cat([v for v in targets['nodes']])
+        tgt_nodes = torch.cat([v for v in targets['nodes']]) # [N, 2]
 
         # Compute the L1 cost between nodes
-        cost_nodes = torch.cdist(out_nodes, tgt_nodes, p=1)
+        cost_nodes = torch.cdist(out_nodes, tgt_nodes, p=1) # [B*Q, N]
 
         # Compute the cls cost
         tgt_ids = torch.cat([torch.tensor([1]*v.shape[0]).to(out_nodes.device) for v in targets['nodes']])

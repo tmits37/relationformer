@@ -1,32 +1,13 @@
-import scipy
+import cv2
 import os
-import sys
 import numpy as np
 import random
-import pickle
-import json
-import scipy.ndimage
 import imageio
-import math
 import torch
 import pyvista
 from torch.utils.data import Dataset
-from scipy.sparse import csr_matrix
 import torchvision.transforms.functional as tvf
 from albumentation_aug import AlbumentationsAugmentation
-
-
-# train_transform = [
-#         dict(type='HorizontalFlip', p=0.5),
-#         dict(type='RandomShadow', p=0.3),
-#         dict(type='RandomFog', p=0.3),
-#         dict(type='CLAHE', p=0.3),
-#         dict(type='RandomGamma', p=0.3),
-#         dict(type='ColorJitter', brightness=0.2, contrast=0, saturation=0, p=0.3),
-#         dict(type='ColorJitter', brightness=0, contrast=0.2, saturation=0, p=0.3),
-#         dict(type='ColorJitter', brightness=0, contrast=0, saturation=0.2, p=0.3),
-#     ]
-# val_transform = []
 
 
 class Sat2GraphDataLoader(Dataset):
@@ -48,6 +29,12 @@ class Sat2GraphDataLoader(Dataset):
 
         self.mean = [0.485, 0.456, 0.406]
         self.std = [0.229, 0.224, 0.225]
+
+    def prepare_seg_sat2graph(self, seg):
+        seg = (seg > 127).astype('float32')
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(3,3))
+        dilated_seg = cv2.dilate(seg.astype('uint8'), kernel, iterations=2)
+        return dilated_seg
     
     def __len__(self):
         """[summary]
@@ -73,8 +60,9 @@ class Sat2GraphDataLoader(Dataset):
         image_data = torch.tensor(image_data, dtype=torch.float).permute(2,0,1)
         image_data = image_data/255.0
         vtk_data = pyvista.read(data['vtp'])
+
         seg_data = imageio.imread(data['seg'])
-        seg_data = seg_data/np.max(seg_data)
+        seg_data = self.prepare_seg_sat2graph(seg_data)
         seg_data = torch.tensor(seg_data, dtype=torch.long).unsqueeze(0)
 
         image_data = image_data.clone().detach().to(dtype=torch.float)
@@ -204,6 +192,7 @@ def build_road_network_data(config, mode="train", split=0.95, loadXYN=False):
             return train_ds, val_ds
         raise  # debugging
     elif mode == "test":  # 테스트 모드만 loadXYN 고려한다.
+        print("test_mode")
         img_folder = os.path.join(config.DATA.TEST_DATA_PATH, "raw")
         seg_folder = os.path.join(config.DATA.TEST_DATA_PATH, "seg")
         vtk_folder = os.path.join(config.DATA.TEST_DATA_PATH, "vtp")
