@@ -59,9 +59,8 @@ class DeformableTransformer(nn.Module):
         if two_stage:
             self.enc_output = nn.Linear(d_model, d_model)
             self.enc_output_norm = nn.LayerNorm(d_model)
-            # self.pos_trans = nn.Linear(d_model * 2, d_model * 2)
-            # self.pos_trans_norm = nn.LayerNorm(d_model * 2)
-            self.pos_trans = nn.Linear(d_model, d_model * 2)
+            self.pos_trans = nn.Linear(d_model * 2, d_model * 2)
+            self.pos_trans_norm = nn.LayerNorm(d_model * 2)
             self.pos_trans_norm = nn.LayerNorm(d_model * 2)
         else:
             self.reference_points = nn.Linear(d_model, 2)

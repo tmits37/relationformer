@@ -92,18 +92,48 @@ class RelationFormer(nn.Module):
                     nn.GroupNorm(32, self.hidden_dim),
                 )])
 
+        # This block exist in Deformable-DETR, but not in Relationformer
+        # prior_prob = 0.01
+        # bias_value = -math.log((1 - prior_prob) / prior_prob)
+        # self.class_embed.bias.data = torch.ones(num_classes) * bias_value
+        # nn.init.constant_(self.bbox_embed.layers[-1].weight.data, 0)
+        # nn.init.constant_(self.bbox_embed.layers[-1].bias.data, 0)
+        # for proj in self.input_proj:
+        #     nn.init.xavier_uniform_(proj[0].weight, gain=1)
+        #     nn.init.constant_(proj[0].bias, 0)
 
-        self.decoder.decoder.bbox_embed = None
 
-        if self.two_stage:
-            num_pred = (decoder.decoder.num_layers + 1) if self.two_stage else decoder.decoder.num_layers
+        # if two-stage, the last class_embed and bbox_embed is for region proposal generation
+        num_pred = (decoder.decoder.num_layers + 1) if self.two_stage else decoder.decoder.num_layers
+        # The previous code block
+        # if self.two_stage:
+        #     self.class_embed = _get_clones(self.class_embed, num_pred)
+        #     self.bbox_embed = _get_clones(self.bbox_embed, num_pred)
+        #     nn.init.constant_(self.bbox_embed[0].layers[-1].bias.data[2:], -2.0)
+        #     # hack implementation for iterative bounding box refinement
+        #     self.decoder.decoder.bbox_embed = self.bbox_embed
 
+        #     self.decoder.decoder.class_embed = self.class_embed
+        #     for box_embed in self.bbox_embed:
+        #         nn.init.constant_(box_embed.layers[-1].bias.data[2:], 0.0)
+
+        # self.decoder.decoder.bbox_embed = None # This is default code, not with_box_refine
+        if self.with_box_refine:
+            print('with_box_refine')
             self.class_embed = _get_clones(self.class_embed, num_pred)
             self.bbox_embed = _get_clones(self.bbox_embed, num_pred)
             nn.init.constant_(self.bbox_embed[0].layers[-1].bias.data[2:], -2.0)
             # hack implementation for iterative bounding box refinement
             self.decoder.decoder.bbox_embed = self.bbox_embed
-
+        else:
+            print('not with_box_refine')
+            nn.init.constant_(self.bbox_embed.layers[-1].bias.data[2:], -2.0)
+            # self.class_embed = nn.ModuleList([self.class_embed for _ in range(num_pred)])
+            # self.bbox_embed = nn.ModuleList([self.bbox_embed for _ in range(num_pred)])
+            self.decoder.decoder.bbox_embed = None
+        if self.two_stage:
+            print('two_stage')
+            # hack implementation for two-stage
             self.decoder.decoder.class_embed = self.class_embed
             for box_embed in self.bbox_embed:
                 nn.init.constant_(box_embed.layers[-1].bias.data[2:], 0.0)
@@ -164,17 +194,15 @@ class RelationFormer(nn.Module):
         if not self.two_stage:
             query_embeds = self.query_embed.weight
         else:
-            query_embeds = self.query_embed.weight
+            query_embeds = self.query_embed.weight # -> Relaiton Token
     
         hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = self.decoder(
             srcs, masks, query_embeds, pos
         )
 
-        # below code are different from Deformable DETR's
-        object_token = hs[...,:self.obj_token,:]
         # For including the gradient propagation in this forward function
+        # hs = hs + 0 * relation_embed
         if self.relation_embed:
-            # hs = hs + 0 * relation_embed
             hs = hs + torch.mm(self.relation_embed(torch.zeros((1, self.relation_embed_dim), device=hs.device)), torch.zeros((2,1), device=hs.device))
 
         if self.two_stage:
@@ -199,36 +227,47 @@ class RelationFormer(nn.Module):
             class_prob = torch.stack(outputs_classes)
             coord_loc = torch.stack(outputs_coords)
 
-            class_prob = class_prob[-1]
-            coord_loc = coord_loc[-1]
-            hs = hs[-1]
+            out = {'pred_logits': class_prob[-1], 'pred_nodes': coord_loc[-1]}
+            hs = hs[-1] #  Do I need this lines?
 
         else:
+            # below code are different from Deformable DETR's
+            object_token = hs[...,:self.obj_token,:]
             class_prob = self.class_embed(object_token) # same from DETR's, Reliability of the obj. [B, OBJ_TOKENS, 2]
             coord_loc = self.bbox_embed(object_token).sigmoid() # same from DETR's, [B, OBJ_TOKENS, 4]
 
+            out = {'pred_logits': class_prob, 'pred_nodes': coord_loc}
+
         if self.edge_descriptors:
             edge_descriptors = self.sample_descriptors(features[0].decompose()[0], coord_loc[:,:,:2])
-        
 
         # Auxiliary Head
         # Normalliy, hs, class_prob, coord_loc: [B, OBJ_TOKENS+1, D], [B, OBJ_TOKENS, 2], [B, OBJ_TOKENS, 4]
         if self.seg:
             # torch.Size([256, 512, 16, 16]) torch.Size([256, 1024, 8, 8]) torch.Size([256, 2048, 4, 4])
             seg_logits = self.aux_fpn_head(features)
-            out = {'pred_logits': class_prob, 'pred_nodes': coord_loc, 'pred_segs': seg_logits}
-        else:
-            out = {'pred_logits': class_prob, 'pred_nodes': coord_loc}
+            out['pred_segs'] = seg_logits
 
         if self.two_stage:
             enc_outputs_coord = enc_outputs_coord_unact.sigmoid()
             out['enc_outputs'] = {'pred_logits': enc_outputs_class, 'pred_nodes': enc_outputs_coord}
+
+            if self.aux_loss:
+                out['aux_outputs'] = self._set_aux_loss(class_prob, coord_loc)
 
         if self.edge_descriptors:
             out['edge_descriptors'] = edge_descriptors
 
         return hs, out, srcs
     
+    @torch.jit.unused
+    def _set_aux_loss(self, outputs_class, outputs_coord):
+        # this is a workaround to make torchscript happy, as torchscript
+        # doesn't support dictionary with non-homogeneous values, such
+        # as a dict having both a Tensor and a list.
+        return [{'pred_logits': a, 'pred_nodes': b}
+                for a, b in zip(outputs_class[:-1], outputs_coord[:-1])]
+
     def _build_mlp(self, input_dim, hidden_layers, output_dim):
         layers = [nn.Linear(input_dim, hidden_layers[0]), nn.ReLU()]
         for i in range(1, len(hidden_layers)):
@@ -312,6 +351,7 @@ class MLP(nn.Module):
 def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
+
 def build_relationformer(config, **kwargs):
 
     encoder = build_backbone(config)
@@ -325,6 +365,7 @@ def build_relationformer(config, **kwargs):
     )
 
     return model
+
 
 def build_relation_embed(config):
     model = RelationEmbed(config)

@@ -54,6 +54,12 @@ def train_epoch(model,
                 if loss_fn.seg:
                     writer.add_scalar('Train/Loss/segs', losses['segs'].item(), iters)
 
+                if loss_fn.two_stage:
+                    for i, l in enumerate(['class', 'boxes', 'cards', 'nodes']):
+                        writer.add_scalar(f'Train/Loss/enc/{l}', losses[f'{l}_enc'].item(), iters)
+                        for j in range(3):
+                            writer.add_scalar(f'Train/Loss/aux/{j}/{l}', losses[f'{l}_aux_{j}'].item(), iters)
+
             # for name, param in model.aux_fpn_head.named_parameters():
             #     if param.requires_grad:
             #         # print(param.grad)
@@ -113,6 +119,13 @@ def validate_epoch(
 
                 if loss_fn.seg:
                     writer.add_scalar('Val/Loss/segs', losses['segs'].item(), iters)
+
+                if loss_fn.two_stage:
+                    for i, l in enumerate(['class', 'boxes', 'cards', 'nodes']):
+                        writer.add_scalar(f'Train/Loss/enc/{l}', losses[f'{l}_enc'].item(), iters)
+                        for j in range(3):
+                            writer.add_scalar(f'Train/Loss/aux/{j}/{l}', losses[f'{l}_aux_{j}'].item(), iters)
+
             tepoch.set_postfix(loss=loss.item())
 
     return total_loss / len(data_loader)

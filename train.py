@@ -143,7 +143,8 @@ def main(args):
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.enabled = True
-    torch.multiprocessing.set_sharing_strategy('file_system')
+    torch.multiprocessing.set_start_method('spawn')
+    torch.multiprocessing.set_sharing_strategy('file_descriptor') # This is the default settings
     # device = torch.device("cuda") if args.device=='cuda' else torch.device("cpu")
 
     # gpu 2개 사용할 경우, world_size = 2, rank = 0 and 1 으로 두번 실행되는것을 관찰할 수 있다.
@@ -307,5 +308,4 @@ def main(args):
 
 if __name__ == '__main__':
     args = parse_args()
-    torch.multiprocessing.set_sharing_strategy('file_system')
     main(args)

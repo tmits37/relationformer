@@ -95,18 +95,20 @@ class SetCriterion(nn.Module):
             self.losses.append('segs')
             print("You WILL calculate additional segmentation loss")
             print(self.weight_dict)
-            # loss_cls_cfg = dict(
-            #     type='CrossEntropyLoss',
-            #     use_sigmoid=False,
-            #     loss_weight=1.0,
-            #     avg_non_ignore=False,
-            #     loss_name='loss_ce')
-            # self.ce_loss = build_loss(loss_cls_cfg)
+
         if self.two_stage:
-            weights = [1, 1, 1]
-            for i, loss in enumerate(['class', 'boxes', 'cards']):
-                self.weight_dict[f'{loss}_enc'] = weights[i]
+            weights = [3, 2, 1, 5]
+            two_stage_weight = 1.0
+            aux_stage_weight = 0.5
+            for i, loss in enumerate(['class', 'boxes', 'cards', 'nodes']):
+                self.weight_dict[f'{loss}_enc'] = weights[i] * two_stage_weight
                 self.losses.append(f'{loss}_enc')
+            
+            for i, loss in enumerate(['class', 'boxes', 'cards', 'nodes']):
+                for j in range(3):
+                    self.weight_dict[f'{loss}_aux_{j}'] = weights[i] * aux_stage_weight
+                    self.losses.append(f'{loss}_aux_{j}')
+
             print("You WILL calculate additional two-stage loss")
             print(self.weight_dict)
 
@@ -344,23 +346,22 @@ class SetCriterion(nn.Module):
         if 'enc_outputs' in out:
             enc_outputs = out['enc_outputs']
             bin_targets = copy.deepcopy(target)
-            # for bt in bin_targets:
-            #     bt['labels'] = torch.zeros_like(bt['labels'])
             indices = self.matcher(enc_outputs, bin_targets)
-
-            # [labels, cardinality, boxes, masks]
-            # for loss in ['class', 'boxes', 'cards']:
-                # if loss == 'masks':
-                #     # Intermediate masks losses are too costly to compute, we ignore them.
-                #     continue
-                # kwargs = {}
-                # if loss == 'labels':
-                #     # Logging is enabled only for the last layer
-                #     kwargs['log'] = False
-                # l_dict = self.get_loss(loss, enc_outputs, bin_targets, indices, num_boxes, **kwargs)
             losses['class_enc'] = self.loss_class(enc_outputs['pred_logits'], indices)
             losses['boxes_enc'] = self.loss_boxes(enc_outputs['pred_nodes'], target['nodes'], indices)
             losses['cards_enc'] = self.loss_cardinality(enc_outputs['pred_logits'], indices)
+            losses['nodes_enc'] = self.loss_nodes(enc_outputs['pred_nodes'][...,:2], target['nodes'], indices)
+
+        # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
+        if 'aux_outputs' in out:
+            bin_targets = copy.deepcopy(target)
+            for i, aux_outputs in enumerate(out['aux_outputs']):
+                bin_targets = copy.deepcopy(target)
+                indices = self.matcher(aux_outputs, bin_targets)
+                losses[f'class_aux_{i}'] = self.loss_class(aux_outputs['pred_logits'], indices)
+                losses[f'boxes_aux_{i}'] = self.loss_boxes(aux_outputs['pred_nodes'], target['nodes'], indices)
+                losses[f'cards_aux_{i}'] = self.loss_cardinality(aux_outputs['pred_logits'], indices)
+                losses[f'nodes_aux_{i}'] = self.loss_nodes(aux_outputs['pred_nodes'][...,:2], target['nodes'], indices)
 
         losses['total'] = sum([losses[key]*self.weight_dict[key] for key in self.losses])
 
