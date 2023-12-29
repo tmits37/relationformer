@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 from skimage import io
+from skimage.transform import resize
 from shapely.geometry import Polygon
 
 import torch
@@ -179,7 +180,9 @@ class CrowdAI(Dataset):
         nodes = nodes / image.shape[0]
 
         image_idx = torch.tensor([idx])
+        image = resize(image, (320, 320, 3), anti_aliasing=True, preserve_range=True) # TODO 일단 300->320
         image = torch.from_numpy(image)
+        image = image.float()
         image = image.permute(2,0,1) / 255.0
         heatmap = torch.from_numpy(heatmap) / 255.0
         

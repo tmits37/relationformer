@@ -56,7 +56,7 @@ class Img2HeatmapDataLoader(Dataset): # 데이터셋 인스턴스
         """
         data = self.data[idx]
         image_data = imageio.imread(data['img'])
-        image_data = resize(image_data, (320, 320, 3), anti_aliasing=True, preserve_range=True)
+        image_data = resize(image_data, (320, 320, 3), anti_aliasing=True, preserve_range=True) # 폴리월드도 업샘플링함. 안하면 에러
         image_data = torch.tensor(image_data, dtype=torch.float).permute(2,0,1)
         image_data = image_data/255.0
         # htm_data = pyvista.read(data['vtp']) # htm는 좌표 값 파일

@@ -153,7 +153,7 @@ def main(args):
         images_directory='/nas/tsgil/dataset/Inria_building/cocostyle/images',
         annotations_path='/nas/tsgil/dataset/Inria_building/cocostyle/annotation.json'
     )
-    # 일단은 훈련셋과 val셋 동일하게
+    # TODO 일단은 훈련셋과 val셋 동일하게
     train_ds = dataset
     val_ds = dataset
 
@@ -201,8 +201,8 @@ def main(args):
         matcher = matcher.to(device)
 
     # Loss = L_node + L_graph
-    # TODO 로스 파일 수정하기
-    loss = SetCriterion(config, matcher, net, distributed=args.distributed).cuda(args.local_rank)
+    # TODO 로스 파일 수정하기 일단 수정됨
+    loss = SetCriterion(config, net, distributed=args.distributed).cuda(args.local_rank)
 
 
     ### Setting optimizer
@@ -258,6 +258,7 @@ def main(args):
         train_loss = train_epoch(
             net,
             data_loader=train_loader, 
+            matcher=matcher,
             loss_fn=loss, 
             optimizer=optimizer, 
             device=device, 
@@ -275,6 +276,7 @@ def main(args):
                 net,
                 config=config,
                 data_loader=val_loader, 
+                matcher=matcher,
                 loss_fn=loss, 
                 device=device, 
                 epoch=epoch, 

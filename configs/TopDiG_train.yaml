@@ -9,56 +9,12 @@ DATA:
   NUM_WORKERS: 4          # Number of data loading threads
   SEED: 10                # random seed for reproducibility
 
-# MODEL:
-#   NUM_CLASSES: 2          # Number of classes, overwritten in data preparation
-
-#   ENCODER:
-#     TYPE: deformable_transformer_backbone
-#     NAME: deformable_transformer_backbone
-#     HIDDEN_DIM: 512 #128 #256 #768
-#     POSITION_EMBEDDING: sine
-#     LR_BACKBONE: 2e-5 # if > 0, True, or False
-#     NUM_FEATURE_LEVELS: 4
-#     BACKBONE: resnet101
-#     MASKS: False
-#     DILATION: False
-
-#     # parameters used else where
-#     IN_CHANS: 3
-#     DEPTHS: [4, 4, 8, 8, 18]
-
-#   DECODER:
-#     TYPE: deformable_transformer
-#     NAME: deformable_transformer
-#     HIDDEN_DIM: 512 #128 #256 #768
-#     NHEADS: 8
-#     ENC_LAYERS: 4 #4 #2
-#     DEC_LAYERS: 4 #4 #2
-#     DIM_FEEDFORWARD: 1024 #128 #512 #2048
-#     DROPOUT: 0.1  # 0.0
-#     ACTIVATION: relu  
-#     NUM_FEATURE_LEVELS: 4
-#     DEC_N_POINTS: 4
-#     ENC_N_POINTS: 4
-#     TWO_STAGE: False
-#     # NUM_QUERIES: 21
-#     AUX_LOSS: False
-#     WITH_BOX_REFINE: False
-#     # RLN_TOKEN: True
-
-#     OBJ_TOKEN: 80
-#     RLN_TOKEN: 1
-#     DUMMY_TOKEN: 0
-
-#     RLN_ATTN: True # only do comb RLN_ATTN True + RLN_TOKEN 0 and reverse
-
 TRAIN:
   EPOCHS: &epoch 8
   LR: 2e-4 # Loss 
   LR_BACKBONE: 2e-4 # L_node
   WEIGHT_DECAY: 2e-5
   LR_DROP: *epoch
-  # CLIP_MAX_NORM: 0.1  # hardcoded
 
   SAVE_PATH: "./work_dirs/TopDiG_train/"          # save path for the checkpoint, log and val results
   VAL_INTERVAL: 4                  # validation interval
@@ -66,7 +22,7 @@ TRAIN:
 
   # loss weight
   LOSSES: ['node', 'graph']
-  W_NODE: 10.0 # 프리트레인과 동일하게 10
+  W_NODE: 10.0 # 조정 가능, loss_fn 안에서는 따로 또 가중치 있음.
   W_GRAPH: 1.0 # 폴리월드 논문과 동일하게 1
 
 

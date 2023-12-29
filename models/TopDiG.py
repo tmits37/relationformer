@@ -2,14 +2,14 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from backbone_R2U_Net import R2U_Net_origin, NonMaxSuppression, DetectionBranch
-from DiG_generator import DiG_generator
+from models.backbone_R2U_Net import R2U_Net_origin, NonMaxSuppression, DetectionBranch
+from models.DiG_generator import DiG_generator
 
 
 class TopDiG(nn.Module): # TODO 클래스 만들기
     """ This is the RelationFormer module that performs object detection """
 
-    def __init__(self, encoder, decoder, filter, detectionBranch, config, device='cuda'):
+    def __init__(self, encoder, decoder, nms, detectionBranch, config, device='cuda'):
         """[summary]
 
         Args:
@@ -19,11 +19,12 @@ class TopDiG(nn.Module): # TODO 클래스 만들기
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
-        self.filter = filter
+        self.nms = nms
         self.detectionBranch = detectionBranch
         # self.cls_token = cls_token
         # self.hidden_dim = config.MODEL.DECODER.HIDDEN_DIM
         self.device = device
+        self.v = None
         # self.init = True
         # self.use_proj_in_dec = use_proj_in_dec
         
@@ -52,51 +53,21 @@ class TopDiG(nn.Module): # TODO 클래스 만들기
         return sel_desc
 
     def forward(self, samples):
-        """ The forward expects a NestedTensor, which consists of:
-               - samples.tensor: batched images, of shape [batch_size x 3 x H x W]
-               - samples.mask: a binary mask of shape [batch_size x H x W], containing 1 on padded pixels
-
-            It returns a dict with the following elements:
-               - "pred_logits": the classification logits (including no-object) for all queries.
-                                Shape= [batch_size x num_queries x (num_classes + 1)]
-               - "pred_boxes": The normalized boxes coordinates for all queries, represented as
-                               (center_x, center_y, height, width). These values are normalized in [0, 1],
-                               relative to the size of each individual image (disregarding possible padding).
-                               See PostProcess for information on how to retrieve the unnormalized bounding box.
-               - "aux_outputs": Optional, only returned when auxilary losses are activated. It is a list of
-                                dictionnaries containing the two above keys for each decoder layer.
-        """
-        
-        # swin transformer
-        # feat_list, mask_list, pos_list = self.encoder(samples, self.position_embedding, return_interm_layers=False)
-        
-        # seresnet
-        # feat_list = [self.encoder(samples)]
-        # mask_list = [torch.zeros(feat_list[0][:, 0, ...].shape, dtype=torch.bool).to(feat_list[0].device)]
-        # pos_list = [self.position_embedding(mask_list[-1]).to(feat_list[0].device)]
-        
-        # query_embed = self.query_embed.weight
-        # h = self.decoder(self.input_proj(feat_list[-1]), mask_list[-1], query_embed, pos_list[-1])
-        # object_token = h[...,:-1,:]
-
-        # class_prob = self.class_embed(object_token)
-        # coord_loc = self.coord_embed(object_token).sigmoid()
-        
-        # out = {'pred_logits': class_prob, 'pred_nodes': coord_loc}
-
         # R2U-Net -> DiG generator
         feature_map = self.encoder(samples)
         vertices_detection_mask = self.detectionBranch(feature_map)
-        vertices_positions = self.filter(vertices_detection_mask)
-        visual_descriptor = self.descriptor_extraction(feature_map, vertices_positions)
-        predicted_adjacency_matrix = self.decoder(feature_map, visual_descriptor)
+        vertices_positions = self.nms(vertices_detection_mask)
+        self.v = vertices_positions
+        # visual_descriptor = self.descriptor_extraction(feature_map, vertices_positions) # TODO
+        visual_descriptor = torch.randn(8, 256, 64).to(self.device)
+        predicted_adjacency_matrix = self.decoder(vertices_positions[1], visual_descriptor)
 
         return predicted_adjacency_matrix
 
 
 def build_TopDiG(config, **kwargs):
     encoder = R2U_Net_origin()
-    filter = NonMaxSuppression()
+    nms = NonMaxSuppression()
     decoder = DiG_generator()
     detectionBranch = DetectionBranch()
     
@@ -104,7 +75,7 @@ def build_TopDiG(config, **kwargs):
     model = TopDiG(
         encoder,
         decoder,
-        filter,
+        nms,
         detectionBranch,
         config,
         **kwargs

@@ -151,9 +151,11 @@ class DiG_generator(nn.Module):
         self.graphHead2 = ScoreNet(DD * 2)
         
 
-    def generate(self, detected_node, visual_descriptor):
-        B, N, _ = detected_node.shape
-        B, N, D = visual_descriptor.shape
+    def forward(self, detected_node, visual_descriptor):
+        print("detected_node:", type(detected_node)) # detected_node는 튜플
+        print("visual_descriptor:", visual_descriptor.shape)
+        # B, N, _ = detected_node.shape
+        # B, N, D = visual_descriptor.shape
 
         # 1. it firstly concatenates each coupled d_i and v_i to embedded descriptors d_emb; N D+2.
         d_emb = torch.cat((visual_descriptor, detected_node), dim=2) # d_emb; B N D+2
@@ -163,14 +165,6 @@ class DiG_generator(nn.Module):
         # produce the D' dimensional initial descriptors d_init; B N D'.
         d_init = self.mlp(d_emb) # d_init; B N D'
         print("d_init:", d_init.shape) # 64 256 768
-        
-        # 배치 나눠서 mlp연산하는 코드
-        # for b in range(B): 
-        #     b_nodes = detected_node[b]
-        #     b_desc = visual_descriptor[b]
-
-        #     b_emb = torch.cat((b_desc, b_nodes), dim=1) # d_emb; N D+2
-        #     d_init = self.mlp(b_emb)
 
         # 3. d_init is fed into a connection network that consists of M(2) transformer encoder layers
         # to yield final descriptors d_final; N D'.
@@ -190,7 +184,8 @@ class DiG_generator(nn.Module):
 
         # 6. Sinkhorn 알고리즘 적용 for polygon-shape target TODO 이거는 시각화 하기위해 좌표 찍는 과정
         # 어차피 트레인 시에는 scores 행렬로 loss 계산할거기 때문에
-        predicted_adjacency_matrix = scores_to_permutations(scores) # 지금은 헝가리안 적용됨, matcher_sinkhorn.py 수정하여 적용할수도
+        # predicted_adjacency_matrix = scores_to_permutations(scores) # 지금은 헝가리안 적용됨, matcher_sinkhorn.py 수정하여 적용할수도
+        # 위 한 줄은 인퍼런스용임. 훈련용은 scores 리턴하면 된다.
         # 6-2.아웃풋 poly형태로 갈거면 한 줄 더 추가
         # poly = permutations_to_polygons(scores, graph, out='coco') # matrix 폴리곤으로 만들기
 
@@ -198,16 +193,15 @@ class DiG_generator(nn.Module):
         # 7. loss_graph: binary cross-entropy loss로 supervised한다. p: A와 B, p_hat: inputs
         # trainer.py 만들고 코드 짜서 loss = BCSLoss() 걸고 트레인하면 될듯
 
-
-        return predicted_adjacency_matrix
+        # scores는 한칸 한칸 -무한대~무한대의 범위를 갖는 score로 이루어져 있다
+        # loss_fn 안에서 softmax로 범위 조정 필요함
+        return scores
     
 
 
 if __name__ == "__main__":
     dig = DiG_generator()
-    # device = torch.device("cuda")
-    # dig = dig.to(device)
     dig.eval()
-    out = dig.generate(v, d)
+    out = dig(v, d) # 엄청 느린데 cuda에 안 올린건지?
     print(out.shape)
     print(out.unique())

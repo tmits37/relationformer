@@ -5,10 +5,21 @@ Modules to compute the matching cost and solve the corresponding LSAP.
 import torch
 from scipy.optimize import linear_sum_assignment
 from torch import nn
+import numpy as np
 
 B = 8
 N = 256
 
+
+def generate_directed_adjacency_matrix(pairs_list, n = N):
+    """ 주어진 노드 쌍 리스트를 기반으로 방향성 인접 행렬을 생성합니다. """
+    adjacency_matrix = np.zeros((n, n), dtype=int)
+
+    # 인접 행렬 채우기
+    for i, j in pairs_list:
+        adjacency_matrix[i, j] = 1  # 방향성 그래프: i에서 j로의 방향
+
+    return adjacency_matrix
 
 class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져옴
     """This class computes an assignment between the targets and the predictions of the network
@@ -17,35 +28,11 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
     there are more predictions than targets. In this case, we do a 1-to-1 matching of the best predictions,
     while the others are un-matched (and thus treated as non-objects).
     """
-
-    def __init__(self, config=None):
-        """Creates the matcher
-
-        Params:
-            cost_class: This is the relative weight of the classification error in the matching cost
-            cost_bbox: This is the relative weight of the L1 error of the bounding box coordinates in the matching cost
-            cost_giou: This is the relative weight of the giou loss of the bounding box in the matching cost
-        """
+    def __init__(self):
         super().__init__()
-        if config is not None:
-            self.cost_nodes = config.MODEL.MATCHER.C_NODE
-            self.cost_class = config.MODEL.MATCHER.C_CLASS
-        else:
-            self.cost_nodes = 3
-            self.cost_class = 5
-
 
     @torch.no_grad()
     def forward(self, outputs, targets):
-        """[summary]
-
-        Args:
-            outputs ([type]): [description]
-            targets ([type]): [description]
-
-        Returns:
-            [type]: [description]
-        """
         # outputs = {'pred_logits':..., 'pred_nodes':tensor(32, 128, 4)}
         # 32개의 배치, 128차원, 4개는 bbox_embed MLP 리턴값 느낌이 앞두개 한점, 뒤두개 다른점
         # r2u의 경우 8, 256, 2가 들어온다
@@ -62,7 +49,7 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         cost_nodes = torch.cdist(out_nodes, tgt_nodes, p=1) # 4096, 722, L1 로스값 텐서
 
         # Compute the cls cost
-        tgt_ids = torch.cat([torch.tensor([1]*v.shape[0]).to(out_nodes.device) for v in targets['nodes']]) # [1]*551
+        # tgt_ids = torch.cat([torch.tensor([1]*v.shape[0]).to(out_nodes.device) for v in targets['nodes']]) # [1]*551
         # v는 32개의 배치인데 하나마다 타겟 노드들 들고 있음
         # 즉 타겟 노드들은 1이라는 클래스를 주는 텐서를 만드는 과정. 값은 1만 갖고 있음 
         # cost_class = -outputs["pred_logits"].flatten(0, 1).softmax(-1)[..., tgt_ids]
@@ -74,7 +61,7 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         # cost_nodes: 3, cost_class: 5
         # C = self.cost_nodes * cost_nodes + self.cost_class * cost_class # 4096,722 + 4096,722
         # 우리는 로짓을 모른다
-        C = self.cost_nodes * cost_nodes # 4096,722
+        C = cost_nodes # 4096,722
         C = C.view(bs, num_queries, -1).cpu()
 
         sizes = [len(v) for v in targets['nodes']]
@@ -82,7 +69,13 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         # 배치별로 나눠서 (32,128,24),(32,128,9)...
         # indices에 헝가리안 결과값 존재. 32개의 2차원 xy 리스트
         # 텐서로 담아서 리턴
-        return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
+        # 이거는 인퍼런스용으로 매칭 되는 것만 알면 됨
+        # return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
+        # 로스 계산하려면 adj_mat 만들어서 리턴해야 함
+        # tgt_edges = target['edges']
+        # pred_edges = [[mapping[i],mapping[j]] for i, j in tgt_edges]
+        return indices
+        return generate_directed_adjacency_matrix(indices)
 
 
 if __name__ == "__main__":
@@ -90,7 +83,7 @@ if __name__ == "__main__":
     matcher.eval()
     output = { # R2U넷의 결과를 nms 돌려서 나온 결과
         "pred_nodes": torch.randn(B, N, 2), # x_cord, y_cord
-        "pred_logits": torch.randn(B, N, 2) # 배경_로짓, 노드_로짓
+        # "pred_logits": torch.randn(B, N, 2) # 배경_로짓, 노드_로짓
     }
     target = {'nodes':[
         torch.tensor([[0.0859, 0.0781],
@@ -228,8 +221,11 @@ if __name__ == "__main__":
         [0.9531, 0.6115]])]
     }
     out = matcher(output, target)
+    # print(out)
     print(out[0][0])
     print(len(out[0][0]))
     print(out[0][1])
     print(len(out[0][1]))
+
+    print(output['pred_nodes'][0][out[0][0][0]])
 

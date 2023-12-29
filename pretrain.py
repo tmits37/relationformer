@@ -149,6 +149,7 @@ def main(args):
     # train_ds, val_ds = build_inria_data(config, mode='split')
     train_ds = build_inria_data(config)
     val_ds = build_inria_data(config, mode='test')
+    val_ds = train_ds # TODO val 셋이 이상한지 검증하기 위해 트레인셋과 동일하게 간다.
     # train_ds = CrowdAI(images_directory='/nas/tsgil/dataset/Inria_building/cocostyle/images',
     #                   annotations_path='/nas/tsgil/dataset/Inria_building/cocostyle/annotation.json')
     # val_ds = train_ds
@@ -207,7 +208,7 @@ def main(args):
     # 이부분도 일단 프리트레인 할거기 때문에 MSE loss로 변경 토치에 존재
     # loss = SetCriterion(config, matcher, net, distributed=args.distributed).cuda(args.local_rank)
     # loss = nn.MSELoss()
-    loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([10]).cuda())
+    loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([100]).cuda())
 
     ### Setting optimizer
     # param_dicts = [

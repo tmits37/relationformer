@@ -39,10 +39,6 @@ def train_epoch(model,
             if is_master:
                 iters = max_iter_in_epoch * epoch + idx
                 writer.add_scalar('Train/Loss', loss.item(), iters)
-                # writer.add_scalar('Train/Loss/class', losses['class'].item(), iters)
-                # writer.add_scalar('Train/Loss/nodes', losses['nodes'].item(), iters)
-                # writer.add_scalar('Train/Loss/boxes', losses['boxes'].item(), iters)
-                # writer.add_scalar('Train/Loss/edges', losses['edges'].item(), iters)
             
             tepoch.set_postfix(loss=loss.item())
 

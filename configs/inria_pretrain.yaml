@@ -10,10 +10,10 @@ DATA:
   SEED: 10                # random seed for reproducibility
 
 TRAIN:
-  EPOCHS: &epoch 80
-  LR: 1e-4
+  EPOCHS: &epoch 200
+  LR: 1e-5
   # LR_BACKBONE: 1e-4
-  WEIGHT_DECAY: 1e-5
+  WEIGHT_DECAY: 1e-6
   LR_DROP: *epoch
   # CLIP_MAX_NORM: 0.1  # hardcoded
 
@@ -22,5 +22,5 @@ TRAIN:
   SAVE_VAL: False                   # save validation data
 
 log:
-  exp_name: 'baseline_R2U_Net_pretrain_epoch80'
+  exp_name: 'baseline_R2U_Net_pretrain_epoch200'
   message: "Baseline TopDig-Node-Detector for road network"

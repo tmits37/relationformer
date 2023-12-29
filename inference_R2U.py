@@ -256,12 +256,12 @@ def parse_args():
 
 if __name__ == "__main__":
     dir_name_ = 'epochs_'
-    for i in range(10, 11):
-        dir_name = dir_name_ + str(i*2)
+    for i in range(1, 11):
+        dir_name = dir_name_ + str(i*3)
         config_file = "configs/inria_pretrain.yaml"
         # ckpt_path = "/nas/tsgil/relationformer/work_dirs/R2U_Net_pretrain/runs/baseline_R2U_Net_pretrain_10/models/epochs_100.pth"
-        ckpt_path = f"/nas/tsgil/relationformer/work_dirs/R2U_Net_pretrain/runs/baseline_R2U_Net_pretrain_epoch20_lr1e-3_10/models/{dir_name}.pth"
-        show_dir = f'/nas/tsgil/gil/infer_R2U/exp5/{dir_name}'
+        ckpt_path = f"/nas/tsgil/relationformer/work_dirs/R2U_Net_pretrain/runs/baseline_R2U_Net_pretrain_epoch30_weight100_10/models/{dir_name}.pth"
+        show_dir = f'/nas/tsgil/gil/infer_R2U/exp8/{dir_name}'
 
         # args = parse_args()
         # config_file = args.config

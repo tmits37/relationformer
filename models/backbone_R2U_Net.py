@@ -144,7 +144,7 @@ class R2U_Net(nn.Module): # Residual U-Net model 백본 + 1x1 CNN
 
 class R2U_Net_origin(nn.Module):
     def __init__(self,img_ch=3,t=1):
-        super(R2U_Net,self).__init__()
+        super(R2U_Net_origin, self).__init__()
         
         self.Maxpool = nn.MaxPool2d(kernel_size=2,stride=2)
         self.Upsample = nn.Upsample(scale_factor=2)
