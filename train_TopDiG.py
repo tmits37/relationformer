@@ -171,7 +171,8 @@ def main(args):
         num_workers=config.DATA.NUM_WORKERS,
         sampler=train_sampler,
         collate_fn=image_graph_collate_road_network_coco,
-        pin_memory=True
+        pin_memory=True,
+        drop_last=True
         )
 
     val_loader = DataLoader(
@@ -280,6 +281,7 @@ def main(args):
                 loss_fn=loss, 
                 device=device, 
                 epoch=epoch, 
+                val_interval=config.TRAIN.VAL_INTERVAL,
                 writer=writer, 
                 is_master=is_master)
         save_checkpoint(

@@ -168,26 +168,24 @@ def main(args):
         num_workers=config.DATA.NUM_WORKERS,
         sampler=train_sampler,
         # collate_fn=image_graph_collate_road_network,
-        pin_memory=True
+        pin_memory=True,
+        drop_last=True
         )
 
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=int(config.DATA.BATCH_SIZE / args.world_size),
-        num_workers=int(config.DATA.NUM_WORKERS / args.world_size),
-        sampler=val_sampler,
-        # collate_fn=image_graph_collate_road_network,
-        pin_memory=True
-        )
-    # train_loader = torch.utils.data.DataLoader(train_ds, batch_size=6, collate_fn=image_graph_collate_road_network_coco)
-    # val_loader = train_loader
+    # val_loader = DataLoader(
+    #     val_ds,
+    #     batch_size=int(config.DATA.BATCH_SIZE / args.world_size),
+    #     num_workers=int(config.DATA.NUM_WORKERS / args.world_size),
+    #     sampler=val_sampler,
+    #     # collate_fn=image_graph_collate_road_network,
+    #     pin_memory=True
+    #     )
+    val_loader = train_loader # 데이터 로더 아예 동일하게
 
 
     ### Setting the model
     net = R2U_Net() # .to(device), R2U Net 빌드하여 데이터 로더 투입
     # matcher = build_matcher(config) # R2U Net은 매쳐 필요 없음
-    # relation_embed = build_relation_embed(config)
-
     if args.distributed:
         device = torch.device(f"cuda:{args.rank}")
 
@@ -199,11 +197,6 @@ def main(args):
     else:
         net = net.to(device)
         # matcher = matcher.to(device)
-
-    # if args.distributed:
-    #     relation_embed = net.module.relation_embed
-    # else:
-    #     relation_embed = net.relation_embed
 
     # 이부분도 일단 프리트레인 할거기 때문에 MSE loss로 변경 토치에 존재
     # loss = SetCriterion(config, matcher, net, distributed=args.distributed).cuda(args.local_rank)
@@ -271,7 +264,6 @@ def main(args):
     for epoch in range(1, n_epochs+1):
         train_loss = train_epoch(
             net,
-            # relation_embed,
             data_loader=train_loader, 
             loss_fn=loss, 
             optimizer=optimizer, 
@@ -288,17 +280,16 @@ def main(args):
         if is_master and (epoch % config.TRAIN.VAL_INTERVAL == 0):
             validate_epoch(
                 net, 
-                # relation_embed,
                 config=config,
                 data_loader=val_loader, 
                 loss_fn=loss, 
                 device=device, 
                 epoch=epoch, 
+                val_interval=config.TRAIN.VAL_INTERVAL,
                 writer=writer, 
                 is_master=is_master)
         save_checkpoint(
-            net, 
-            # relation_embed,
+            net,
             optimizer,
             scheduler,
             epoch, 

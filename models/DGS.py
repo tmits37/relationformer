@@ -8,16 +8,21 @@ from torch import nn
 import numpy as np
 
 B = 8
-N = 256
+N = 16 # N*N adj_mat을 만들 것임
 
 
-def generate_directed_adjacency_matrix(pairs_list, n = N):
+def generate_directed_adjacency_matrix(pairs_list, picked_nodes, k):
     """ 주어진 노드 쌍 리스트를 기반으로 방향성 인접 행렬을 생성합니다. """
-    adjacency_matrix = np.zeros((n, n), dtype=int)
+    adjacency_matrix = np.zeros((k, k), dtype=int)
 
     # 인접 행렬 채우기
     for i, j in pairs_list:
         adjacency_matrix[i, j] = 1  # 방향성 그래프: i에서 j로의 방향
+    # 매칭 안된 노드들 대각선에 1 대입
+    picked_nodes = set(picked_nodes.values())
+    for i in range(k):
+        if i not in picked_nodes:
+            adjacency_matrix[i, i] = 1
 
     return adjacency_matrix
 
@@ -32,7 +37,7 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         super().__init__()
 
     @torch.no_grad()
-    def forward(self, outputs, targets):
+    def forward(self, outputs, targets, k=N):
         # outputs = {'pred_logits':..., 'pred_nodes':tensor(32, 128, 4)}
         # 32개의 배치, 128차원, 4개는 bbox_embed MLP 리턴값 느낌이 앞두개 한점, 뒤두개 다른점
         # r2u의 경우 8, 256, 2가 들어온다
@@ -71,11 +76,33 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         # 텐서로 담아서 리턴
         # 이거는 인퍼런스용으로 매칭 되는 것만 알면 됨
         # return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
-        # 로스 계산하려면 adj_mat 만들어서 리턴해야 함
-        # tgt_edges = target['edges']
-        # pred_edges = [[mapping[i],mapping[j]] for i, j in tgt_edges]
-        return indices
-        return generate_directed_adjacency_matrix(indices)
+        # print(indices[1])
+        result = []
+        mapping = []
+        sample_edges = []
+        k = len(outputs['pred_nodes'][0]) # N 을 따라감
+        for idx in range(bs):
+            tmp = {j:i for i,j in zip(indices[idx][0].tolist(),indices[idx][1].tolist())}
+            mapping.append(tmp)
+            edges = targets['edges'][idx].tolist()
+            n = len(edges) # 빌딩 수에 따라 히트맵 노드 수가 바뀐다
+            sample_edge = []
+            if k<n:
+                tmp2 = {edge[0]: edge[1] for edge in edges}
+                for i, j in edges:
+                    if i not in tmp:
+                        while i not in tmp:
+                            i = tmp2[i]
+                    if j not in tmp:
+                        while j not in tmp:
+                            j = tmp2[j]
+                    if tmp[i] != tmp[j]:
+                        sample_edge.append([tmp[i],tmp[j]])
+            else:
+                sample_edge = [[tmp[i],tmp[j]] for i, j in edges]
+            sample_edges.append(sample_edge)
+            result.append(torch.tensor(generate_directed_adjacency_matrix(sample_edge, tmp, k), device=outputs.device)) # 디바이스 맞추기
+        return torch.stack(result)
 
 
 if __name__ == "__main__":
@@ -218,14 +245,30 @@ if __name__ == "__main__":
         [0.5078, 0.8047],
         [0.7656, 0.3125],
         [0.3594, 0.9531],
-        [0.9531, 0.6115]])]
+        [0.9531, 0.6115]])],
+        'edges': []
     }
+    # 타겟에 테스트 엣지 추가
+    for i in range(len(target['nodes'])):
+        l = []
+        length = len(target['nodes'][i])
+        tmp = []
+        for i in range(length):
+            if i == length - 1:
+                tmp.append([i, 0])
+            else:
+                tmp.append([i, i+1])
+        target['edges'].append(torch.tensor(tmp))
     out = matcher(output, target)
+    # print('target_edges:', target['edges'])
     # print(out)
-    print(out[0][0])
-    print(len(out[0][0]))
-    print(out[0][1])
-    print(len(out[0][1]))
+    # print(out[0][0])
+    # print(len(out[0][0]))
+    # print(out[0][1])
+    # print(len(out[0][1]))
 
-    print(output['pred_nodes'][0][out[0][0][0]])
+    # print(output['pred_nodes'][0][out[0][0][0]])
+    print('out')
+    for i in range(len(out)):
+        print(out[i])
 

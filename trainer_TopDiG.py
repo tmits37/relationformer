@@ -36,10 +36,10 @@ def train_epoch(model,
             optimizer.zero_grad()
             # [0]: 256개 중에 gt 노드 개수만큼 뽑기, [1]: pred와 매칭되게 순서맞게 arrange
 
-            pred = {'pred_nodes': (model.v[1]/320).to(device)}
-            gt = {'nodes': nodes, 'edges': edges}
             with torch.cuda.amp.autocast():
                 out = model(images)
+                pred = {'pred_nodes': (model.v[1]/320).to(device)}
+                gt = {'nodes': nodes, 'edges': edges}
                 adj_mat_label = matcher(pred, gt) # TODO 256*256 만들기
                 # losses = loss_fn(out, {'nodes': nodes, 'edges': edges})
                 losses = loss_fn(out, adj_mat_label)
@@ -51,12 +51,12 @@ def train_epoch(model,
 
             total_loss += loss.item()
             if is_master:
-                iters = max_iter_in_epoch * epoch + idx
-                writer.add_scalar('Train/Loss', loss.item(), iters)
-                writer.add_scalar('Train/Loss/node', losses['node'].item(), iters)
-                writer.add_scalar('Train/Loss/graph', losses['graph'].item(), iters)
+                iters = int(max_iter_in_epoch * (epoch - 1) + idx)
+                writer.add_scalar('Train/Loss', loss.item() / len(images), iters)
+                writer.add_scalar('Train/Loss/node', losses['node'].item() / len(images), iters)
+                writer.add_scalar('Train/Loss/graph', losses['graph'].item() / len(images), iters)
             
-            tepoch.set_postfix(loss=loss.item())
+            tepoch.set_postfix(loss=loss.item() / len(images))
 
 
     return total_loss / len(data_loader)
@@ -70,6 +70,7 @@ def validate_epoch(
     loss_fn, 
     device, 
     epoch, 
+    val_interval,
     writer, 
     is_master):
     model.eval()
@@ -89,18 +90,17 @@ def validate_epoch(
             adj_mat_label = matcher(pred, gt) # TODO
 
             out = model(images)
-            # losses = loss_fn(out, {'nodes': nodes, 'edges': edges})
             losses = loss_fn(out, adj_mat_label)
             loss = losses['total']
             total_loss += loss.item()
 
             if is_master:
-                iters = max_iter_in_epoch * epoch + idx
-                writer.add_scalar('Val/Loss', loss.item(), iters)
-                writer.add_scalar('Val/Loss/node', losses['node'].item(), iters)
-                writer.add_scalar('Val/Loss/graph', losses['graph'].item(), iters)
+                iters = int(max_iter_in_epoch * (epoch - 1) / val_interval + idx)
+                writer.add_scalar('Val/Loss', loss.item() / len(images), iters)
+                writer.add_scalar('Val/Loss/node', losses['node'].item() / len(images), iters)
+                writer.add_scalar('Val/Loss/graph', losses['graph'].item() / len(images), iters)
 
-            tepoch.set_postfix(loss=loss.item())
+            tepoch.set_postfix(loss=loss.item() / len(images))
 
     return total_loss / len(data_loader)
 

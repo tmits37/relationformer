@@ -37,10 +37,10 @@ def train_epoch(model,
 
             total_loss += loss.item()
             if is_master:
-                iters = max_iter_in_epoch * epoch + idx
-                writer.add_scalar('Train/Loss', loss.item(), iters)
+                iters = int(max_iter_in_epoch * (epoch - 1) + idx)
+                writer.add_scalar('Train/Loss', loss.item() / len(images), iters)
             
-            tepoch.set_postfix(loss=loss.item())
+            tepoch.set_postfix(loss=loss.item() / len(images))
 
 
     return total_loss / len(data_loader)
@@ -53,6 +53,7 @@ def validate_epoch(
     loss_fn, 
     device, 
     epoch, 
+    val_interval,
     writer, 
     is_master):
 
@@ -69,26 +70,15 @@ def validate_epoch(
             heatmap = heatmap.to(device)
 
             out = model(images)
-            # pred_nodes, pred_edges = relation_infer(
-            #     h.detach(), 
-            #     out, 
-            #     relation_embed, 
-            #     config.MODEL.DECODER.OBJ_TOKEN, 
-            #     config.MODEL.DECODER.RLN_TOKEN
-            # )
             losses = loss_fn(out, heatmap)
             loss = losses
             total_loss += loss.item()
 
             if is_master:
-                iters = max_iter_in_epoch * epoch + idx
-                writer.add_scalar('Val/Loss', loss.item(), iters)
-                # writer.add_scalar('Val/Loss/class', losses['class'].item(), iters)
-                # writer.add_scalar('Val/Loss/nodes', losses['nodes'].item(), iters)
-                # writer.add_scalar('Val/Loss/boxes', losses['boxes'].item(), iters)
-                # writer.add_scalar('Val/Loss/edges', losses['edges'].item(), iters)
+                iters = int(max_iter_in_epoch * (epoch - 1) / val_interval + idx)
+                writer.add_scalar('Val/Loss', loss.item() / len(images), iters)
 
-            tepoch.set_postfix(loss=loss.item())
+            tepoch.set_postfix(loss=loss.item() / len(images))
 
     return total_loss / len(data_loader)
 
@@ -111,12 +101,6 @@ def save_checkpoint(model, optimizer, scheduler, epoch, config):
         'schedulaer_state_dict': scheduler.state_dict()
     }
 
-    # relation_embed_checkpoint = {
-    #     'epoch': epoch,
-    #     'model_state_dict': relation_embed.state_dict(),
-    #     'optimizer_state_dict': optimizer.state_dict()
-    # }
-
     # If using DDP, save the original model wrapped inside DDP
     if isinstance(model, torch.nn.parallel.DistributedDataParallel):
         checkpoint['model_state_dict'] = model.module.state_dict()
@@ -124,8 +108,6 @@ def save_checkpoint(model, optimizer, scheduler, epoch, config):
     savedir = os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED), 'models')
     os.makedirs(savedir, exist_ok=True)
     checkpoint_path = os.path.join(savedir, f'epochs_{epoch}.pth')
-    # relation_embed_checkpoint_path = os.path.join(savedir, f'relation_embed_epochs_{epoch}.pth')
 
     # Save the checkpoint
     torch.save(checkpoint, checkpoint_path)
-    # torch.save(relation_embed_checkpoint, relation_embed_checkpoint_path)

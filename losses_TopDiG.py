@@ -47,7 +47,7 @@ class SetCriterion(nn.Module):
 
     def forward(self, out, target): # TODO out target I/O 따지기
         losses = {}
-        # 밑에 두개의 out과 target이 서로 다른 것 같다
+        # TODO 밑에 두개의 out과 target이 서로 다른 것 같다
         losses['node'] = self.loss_node(out, target)
         losses['graph'] = self.loss_graph(out, target)
         
