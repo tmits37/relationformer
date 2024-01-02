@@ -41,8 +41,16 @@ def to_img_and_seg_from_results(filelist, rootdir, image_size=(2048, 2048), patc
     return tot_seg, tot_img
 
 
-def to_graph_from_results(tot_img, filelist, rootdir, patch_size=(128,128), option='pred', single_patch=False):
+def to_graph_from_results(tot_img, 
+                          filelist, 
+                          rootdir,
+                          patch_size=(128,128), 
+                          option='pred', 
+                          overwrite=False, 
+                          single_patch=False):
     blank_image = tot_img.copy()
+
+    filelist = sorted(filelist, key=lambda x: int(x.split('_')[2]))
     for filename in filelist:
         with open(os.path.join(rootdir, 'graph', filename)) as f:
             data = json.load(f)
@@ -58,14 +66,31 @@ def to_graph_from_results(tot_img, filelist, rootdir, patch_size=(128,128), opti
         nodes = data[f'{option}_node']
         edges = data[f'{option}_edge']
 
-        for edge in edges:
-            node1 = scale_coordinates(nodes[edge[0]], patch_size, x0, y0)
-            node2 = scale_coordinates(nodes[edge[1]], patch_size, x0, y0)
-            cv2.line(blank_image, node1[::-1], node2[::-1], (255, 0, 0), 3) 
+        if overwrite:
+            for edge in edges:
+                node1 = scale_coordinates(nodes[edge[0]], patch_size, x0, y0)
+                node2 = scale_coordinates(nodes[edge[1]], patch_size, x0, y0)
+                cv2.line(blank_image, node1[::-1], node2[::-1], (255, 0, 0), 2) 
 
-        for node in nodes:
-            scaled_node = scale_coordinates(node, patch_size, x0, y0)
-            cv2.circle(blank_image, scaled_node[::-1], 5, (0, 0, 255), -1) 
+            for node in nodes:
+                scaled_node = scale_coordinates(node, patch_size, x0, y0)
+                cv2.circle(blank_image, scaled_node[::-1], 3, (0, 255, 0), -1)
+                cv2.circle(blank_image, scaled_node[::-1], 3, (255, 255, 0), 1)
+
+
+        else:
+            palette_image = tot_img[x0:x0+patch_size[0], y0:y0+patch_size[1]].copy()
+            for edge in edges:
+                node1 = scale_coordinates(nodes[edge[0]], patch_size, 0, 0)
+                node2 = scale_coordinates(nodes[edge[1]], patch_size, 0, 0)
+                cv2.line(palette_image, node1[::-1], node2[::-1], (255, 0, 0), 2) 
+
+            for node in nodes:
+                scaled_node = scale_coordinates(node, patch_size, 0, 0)
+                cv2.circle(palette_image, scaled_node[::-1], 3, (0, 255, 0), -1)
+                cv2.circle(palette_image, scaled_node[::-1], 3, (255, 255, 0), 1)
+
+            blank_image[int(x0):int(x0)+int(patch_size[0]), int(y0):int(y0)+int(patch_size[1])] = palette_image
 
         #  save
         if single_patch:
@@ -89,6 +114,7 @@ def parse_args():
     parser.add_argument('--dataset', type=str, choices=['sat2graph', 'spacenet'],
                         default='sat2graph', help='define dataset')
     parser.add_argument('--patch-size', type=int, default=128)
+    parser.add_argument('--overwrite', action='store_true')
     parser.add_argument('--single-patch', action='store_true')
     args = parser.parse_args()
     return args
@@ -132,10 +158,22 @@ if __name__ == "__main__":
         filelist_g_region = tmp
 
         tot_seg, tot_img = to_img_and_seg_from_results(filelist_p_region, rootdir, image_size, patch_size)
-        tot_graph = to_graph_from_results(tot_img, filelist_g_region, rootdir, patch_size, option='pred', single_patch=args.single_patch)
+        tot_graph = to_graph_from_results(tot_img, 
+                                          filelist_g_region, 
+                                          rootdir, 
+                                          patch_size, 
+                                          option='pred', 
+                                          overwrite=args.overwrite,
+                                          single_patch=args.single_patch)
 
         if not args.single_patch:
-            gt_tot_graph = to_graph_from_results(tot_img, filelist_g_region, rootdir, patch_size, option='gt', single_patch=False)
+            gt_tot_graph = to_graph_from_results(tot_img, 
+                                                 filelist_g_region, 
+                                                 rootdir, 
+                                                 patch_size, 
+                                                 option='gt', 
+                                                 overwrite=True,
+                                                 single_patch=False)
 
             fig, ax = plt.subplots(1, 2, figsize=(18,9))
             # fig, ax = plt.subplots(2, 1, figsize=(18,36))
