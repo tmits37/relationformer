@@ -7,7 +7,6 @@ from inference import relation_infer
 
 
 def train_epoch(model,
-                relation_embed,
                 data_loader, 
                 loss_fn, 
                 optimizer, 
@@ -43,41 +42,41 @@ def train_epoch(model,
 
             total_loss += loss.item()
             if is_master:
-                iters = max_iter_in_epoch * epoch + idx
-                writer.add_scalar('Train/Loss', loss.item(), iters)
-                writer.add_scalar('Train/Loss/class', losses['class'].item(), iters)
-                writer.add_scalar('Train/Loss/nodes', losses['nodes'].item(), iters)
-                writer.add_scalar('Train/Loss/boxes', losses['boxes'].item(), iters)
+                iters = int(max_iter_in_epoch * (epoch - 1) + idx)
+                writer.add_scalar('Train/Loss', loss.item() / len(images), iters)
+                writer.add_scalar('Train/Loss/class', losses['class'].item() / len(images), iters)
+                writer.add_scalar('Train/Loss/nodes', losses['nodes'].item() / len(images), iters)
+                writer.add_scalar('Train/Loss/boxes', losses['boxes'].item() / len(images), iters)
 
                 # writer.add_scalar('Train/Loss/edges', losses['edges'].item(), iters)
 
                 if loss_fn.seg:
-                    writer.add_scalar('Train/Loss/segs', losses['segs'].item(), iters)
+                    writer.add_scalar('Train/Loss/segs', losses['segs'].item() / len(images), iters)
 
                 if loss_fn.two_stage:
                     for i, l in enumerate(['class', 'boxes', 'cards', 'nodes']):
-                        writer.add_scalar(f'Train/Loss/enc/{l}', losses[f'{l}_enc'].item(), iters)
+                        writer.add_scalar(f'Train/Loss/enc/{l}', losses[f'{l}_enc'].item() / len(images), iters)
                         for j in range(3):
-                            writer.add_scalar(f'Train/Loss/aux/{j}/{l}', losses[f'{l}_aux_{j}'].item(), iters)
+                            writer.add_scalar(f'Train/Loss/aux/{j}/{l}', losses[f'{l}_aux_{j}'].item() / len(images), iters)
 
             # for name, param in model.aux_fpn_head.named_parameters():
             #     if param.requires_grad:
             #         # print(param.grad)
             #         writer.add_histogram(name + '_grad', param.grad, iters)
             
-            tepoch.set_postfix(loss=loss.item())
+            tepoch.set_postfix(loss=loss.item() / len(images))
 
     return total_loss / len(data_loader)
 
 
 def validate_epoch(
     model, 
-    relation_embed,
     config,
     data_loader, 
     loss_fn, 
     device, 
-    epoch, 
+    epoch,
+    val_interval,
     writer, 
     is_master):
 
@@ -96,42 +95,36 @@ def validate_epoch(
             edges = [edge.to(device) for edge in edges]
 
             h, out, srcs = model(images)
-            # pred_nodes, pred_edges = relation_infer(
-            #     h.detach(), 
-            #     out, 
-            #     relation_embed, 
-            #     config.MODEL.DECODER.OBJ_TOKEN, 
-            #     config.MODEL.DECODER.RLN_TOKEN
-            # )
+
             losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges, 'segs':seg})
             loss = losses['total']
             total_loss += loss.item()
 
             if is_master:
-                iters = max_iter_in_epoch * epoch + idx
-                writer.add_scalar('Val/Loss', loss.item(), iters)
-                writer.add_scalar('Val/Loss/class', losses['class'].item(), iters)
-                writer.add_scalar('Val/Loss/nodes', losses['nodes'].item(), iters)
-                writer.add_scalar('Val/Loss/boxes', losses['boxes'].item(), iters)
+                iters = int(max_iter_in_epoch * (epoch - 1) / val_interval + idx)
+                writer.add_scalar('Val/Loss', loss.item() / len(images), iters)
+                writer.add_scalar('Val/Loss/class', losses['class'].item() / len(images), iters)
+                writer.add_scalar('Val/Loss/nodes', losses['nodes'].item() / len(images), iters)
+                writer.add_scalar('Val/Loss/boxes', losses['boxes'].item() / len(images), iters)
 
                 if config.MODEL.DECODER.RLN_TOKEN > 0:
-                    writer.add_scalar('Val/Loss/edges', losses['edges'].item(), iters)
+                    writer.add_scalar('Val/Loss/edges', losses['edges'].item() / len(images), iters)
 
                 if loss_fn.seg:
-                    writer.add_scalar('Val/Loss/segs', losses['segs'].item(), iters)
+                    writer.add_scalar('Val/Loss/segs', losses['segs'].item() / len(images), iters)
 
                 if loss_fn.two_stage:
                     for i, l in enumerate(['class', 'boxes', 'cards', 'nodes']):
-                        writer.add_scalar(f'Train/Loss/enc/{l}', losses[f'{l}_enc'].item(), iters)
+                        writer.add_scalar(f'Val/Loss/enc/{l}', losses[f'{l}_enc'].item() / len(images), iters)
                         for j in range(3):
-                            writer.add_scalar(f'Train/Loss/aux/{j}/{l}', losses[f'{l}_aux_{j}'].item(), iters)
+                            writer.add_scalar(f'Val/Loss/aux/{j}/{l}', losses[f'{l}_aux_{j}'].item() / len(images), iters)
 
-            tepoch.set_postfix(loss=loss.item())
+            tepoch.set_postfix(loss=loss.item() / len(images))
 
     return total_loss / len(data_loader)
 
 
-def save_checkpoint(model, relation_embed, optimizer, epoch, config):
+def save_checkpoint(model, optimizer, epoch, config):
     """
     Save a checkpoint of the training process.
 

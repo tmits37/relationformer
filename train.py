@@ -177,7 +177,8 @@ def main(args):
         num_workers=config.DATA.NUM_WORKERS,
         sampler=train_sampler,
         collate_fn=image_graph_collate_road_network,
-        pin_memory=True
+        pin_memory=True,
+        drop_last=True,
         )
 
     val_loader = DataLoader(
@@ -266,7 +267,6 @@ def main(args):
     for epoch in range(1, n_epochs+1):
         train_loss = train_epoch(
             net,
-            relation_embed,
             train_loader, 
             loss_fn=loss, 
             optimizer=optimizer, 
@@ -280,17 +280,16 @@ def main(args):
         if is_master and (epoch % config.TRAIN.VAL_INTERVAL == 0):
             validate_epoch(
                 net, 
-                relation_embed,
                 config,
                 val_loader, 
                 loss_fn=loss, 
                 device=device, 
                 epoch=epoch, 
+                val_interval=config.TRAIN.VAL_INTERVAL,
                 writer=writer, 
                 is_master=is_master)
             save_checkpoint(
                 net, 
-                relation_embed,
                 optimizer,
                 epoch, 
                 config)
