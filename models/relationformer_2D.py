@@ -64,10 +64,12 @@ class RelationFormer(nn.Module):
             # self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*2, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
             self.relation_embed = None
 
-        if not self.two_stage:
-            self.query_embed = nn.Embedding(self.num_queries, self.hidden_dim*2)    # why *2
-        else:
+        if (self.two_stage==True) and (self.config.MODEL.DECODER.RLN_TOKEN > 0):
             self.query_embed = nn.Embedding(config.MODEL.DECODER.RLN_TOKEN, self.hidden_dim*2)
+        elif (self.two_stage==True) and (self.config.MODEL.DECODER.RLN_TOKEN == 0):
+            self.query_embed = None
+        else: 
+            self.query_embed = nn.Embedding(self.num_queries, self.hidden_dim*2)
 
         if self.num_feature_levels > 1:
             num_backbone_outs = len(self.encoder.strides)
@@ -191,11 +193,9 @@ class RelationFormer(nn.Module):
                 pos.append(pos_l)
 
         query_embeds = None
-        if not self.two_stage:
+        if (self.config.MODEL.DECODER.RLN_TOKEN > 0) or (self.config.MODEL.DECODER.TWO_STAGE == False):
             query_embeds = self.query_embed.weight
-        else:
-            query_embeds = self.query_embed.weight # -> Relaiton Token
-    
+
         hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord_unact = self.decoder(
             srcs, masks, query_embeds, pos
         )

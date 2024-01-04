@@ -171,9 +171,6 @@ class DeformableTransformer(nn.Module):
         bs, _, c = memory.shape
         if self.two_stage:
             rln_token = query_embed # [1,2*D]
-            rln_query_embed, tgt_rln_token = torch.split(rln_token, c, dim=1)
-            rln_query_embed = rln_query_embed.unsqueeze(0).expand(bs, -1, -1)
-            tgt_rln_token = tgt_rln_token.unsqueeze(0).expand(bs, -1, -1)
 
             output_memory, output_proposals = self.gen_encoder_output_proposals(memory, mask_flatten, spatial_shapes)
 
@@ -198,8 +195,14 @@ class DeformableTransformer(nn.Module):
             pos_trans_out = self.pos_trans_norm(self.pos_trans(self.get_proposal_pos_embed(topk_coords_unact)))
             query_embed, tgt = torch.split(pos_trans_out, c, dim=2) # [B, topk, D], [B, topk, D]
 
-            query_embed = torch.cat([query_embed, rln_query_embed], dim=1)
-            tgt = torch.cat([tgt, tgt_rln_token], dim=1)
+            if rln_token is not None:
+                rln_query_embed, tgt_rln_token = torch.split(rln_token, c, dim=1)
+                rln_query_embed = rln_query_embed.unsqueeze(0).expand(bs, -1, -1)
+                tgt_rln_token = tgt_rln_token.unsqueeze(0).expand(bs, -1, -1)
+
+                query_embed = torch.cat([query_embed, rln_query_embed], dim=1)
+                tgt = torch.cat([tgt, tgt_rln_token], dim=1)
+
         else:
             query_embed, tgt = torch.split(query_embed, c, dim=1) 
             query_embed = query_embed.unsqueeze(0).expand(bs, -1, -1)
