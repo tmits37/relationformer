@@ -97,7 +97,10 @@ class SetCriterion(nn.Module):
             print(self.weight_dict)
 
         if self.two_stage:
-            weights = [3, 2, 1, 5]
+            weights = [config.TRAIN.W_CLASS, 
+                       config.TRAIN.W_BBOX, 
+                       config.TRAIN.W_CARD, 
+                       config.TRAIN.W_NODE]
             two_stage_weight = 1.0
             aux_stage_weight = 0.5
             for i, loss in enumerate(['class', 'boxes', 'cards', 'nodes']):

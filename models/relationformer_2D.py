@@ -153,7 +153,7 @@ class RelationFormer(nn.Module):
             )
 
 
-    def forward(self, samples, seg=True):
+    def forward(self, samples, seg=True, targets=None):
 
         if not seg and not isinstance(samples, NestedTensor):
             # When inferencing
