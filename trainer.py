@@ -32,7 +32,14 @@ def train_epoch(model,
             edges = [edge.to(device) for edge in edges]
 
             optimizer.zero_grad()
-            h, out, srcs = model(images)
+
+            targets = {'nodes': nodes, 'edges': edges, 'segs':seg}
+            wh = torch.ones(1,2).to(device) * 0.05
+            targets['labels'] = [torch.zeros(len(x)).long().to(device) for x in targets['nodes']]
+            targets['boxes'] = [torch.cat([x, wh.repeat(len(x), 1)], dim=-1) for x in targets['nodes']]
+            targets_converted = [{key: value for key, value in zip(targets.keys(), values)} for values in zip(*targets.values())]
+
+            h, out, srcs = model(images, targets=targets_converted)
 
             losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges, 'segs':seg})
             loss = losses['total']
@@ -94,7 +101,13 @@ def validate_epoch(
             nodes = [node.to(device) for node in nodes]
             edges = [edge.to(device) for edge in edges]
 
-            h, out, srcs = model(images)
+            targets = {'nodes': nodes, 'edges': edges, 'segs':seg}
+            wh = torch.ones(1,2).to(device) * 0.05
+            targets['labels'] = [torch.zeros(len(x)).long().to(device) for x in targets['nodes']]
+            targets['boxes'] = [torch.cat([x, wh.repeat(len(x), 1)], dim=-1) for x in targets['nodes']]
+            targets_converted = [{key: value for key, value in zip(targets.keys(), values)} for values in zip(*targets.values())]
+
+            h, out, srcs = model(images, targets=targets_converted)
 
             losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges, 'segs':seg})
             loss = losses['total']

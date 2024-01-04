@@ -9,7 +9,7 @@ import matplotlib.gridspec as gridspec
 import torch
 import networkx as nx
 from dataset_road_network import build_road_network_data
-from models import build_model
+from models import build_model, build_relationformer_dino
 from utils import image_graph_collate_road_network
 from PIL import Image
 from tqdm import tqdm
@@ -287,7 +287,13 @@ if __name__ == "__main__":
                             pin_memory=True)
     print(len(val_ds), len(val_loader)) # 테스트셋 전체 지역 패치: 25036개, 훈련셋 지역 21: 631개
 
-    model = build_model(config)
+    ### Setting the model
+    if config.MODEL.DECODER.TWO_STAGE_TYPE == "dino":
+        print("Relationformer DINO")
+        model = build_relationformer_dino(config)
+    else:
+        model = build_model(config) # .to(device)
+
     device = torch.device("cuda")
     model = model.to(device)
 
@@ -324,7 +330,11 @@ if __name__ == "__main__":
         images = images.cuda()
 
         seg = seg.cuda()
-        h, out, _ = model(images, seg=False) # seg=False
+        h, out, _ = model(images, seg=False) # seg=False means it is not on train
+
+        if type(h) == list: # When using DINO
+            h = h[-1]
+
         pred_nodes, pred_edges, pred_nodes_box, pred_nodes_box_score, pred_nodes_box_class, pred_edges_box_score, pred_edges_box_class = relation_infer(
                     h.detach(), out, model.relation_embed, config.MODEL.DECODER.OBJ_TOKEN, config.MODEL.DECODER.RLN_TOKEN,
                     nms=False, map_=True

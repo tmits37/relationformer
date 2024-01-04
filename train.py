@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from dataset_road_network import build_road_network_data
-from models import build_model
+from models import build_model, build_relationformer_dino
 from models.relationformer_2D import build_relation_embed
 from utils import image_graph_collate_road_network
 from torch.utils.tensorboard import SummaryWriter
@@ -192,7 +192,11 @@ def main(args):
 
 
     ### Setting the model
-    net = build_model(config) # .to(device)
+    if config.MODEL.DECODER.TWO_STAGE_TYPE == "dino":
+        print("Relationformer DINO")
+        net = build_relationformer_dino(config)
+    else:
+        net = build_model(config) # .to(device)
     matcher = build_matcher(config)
     # relation_embed = build_relation_embed(config)
 
@@ -217,6 +221,7 @@ def main(args):
 
 
     ### Setting optimizer
+    # decoder.decoder.layers.0.cross_attn_sampling_offsets
     param_dicts = [
         {
             "params":
