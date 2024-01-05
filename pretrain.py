@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from dataset_inria import build_inria_data
 from dataloader_cocostyle import CrowdAI, image_graph_collate_road_network_coco
-from models.backbone_R2U_Net import R2U_Net
+from models.backbone_R2U_Net import R2U_Net, build_Backbone
 from utils import image_graph_collate_road_network
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.distributed import DistributedSampler
@@ -148,7 +148,7 @@ def main(args):
     # 데이터 셋을 데이터 폴더에서 불러온다
     # train_ds, val_ds = build_inria_data(config, mode='split')
     train_ds = build_inria_data(config)
-    val_ds = build_inria_data(config, mode='test')
+    # val_ds = build_inria_data(config, mode='test') # TODO
     val_ds = train_ds # TODO val 셋이 이상한지 검증하기 위해 트레인셋과 동일하게 간다.
     # train_ds = CrowdAI(images_directory='/nas/tsgil/dataset/Inria_building/cocostyle/images',
     #                   annotations_path='/nas/tsgil/dataset/Inria_building/cocostyle/annotation.json')
@@ -184,7 +184,8 @@ def main(args):
 
 
     ### Setting the model
-    net = R2U_Net() # .to(device), R2U Net 빌드하여 데이터 로더 투입
+    # net = R2U_Net() # .to(device), R2U Net 빌드하여 데이터 로더 투입
+    net = build_Backbone(config)
     # matcher = build_matcher(config) # R2U Net은 매쳐 필요 없음
     if args.distributed:
         device = torch.device(f"cuda:{args.rank}")
@@ -196,7 +197,6 @@ def main(args):
                                       )
     else:
         net = net.to(device)
-        # matcher = matcher.to(device)
 
     # 이부분도 일단 프리트레인 할거기 때문에 MSE loss로 변경 토치에 존재
     # loss = SetCriterion(config, matcher, net, distributed=args.distributed).cuda(args.local_rank)

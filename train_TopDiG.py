@@ -181,7 +181,10 @@ def main(args):
         num_workers=int(config.DATA.NUM_WORKERS / args.world_size),
         sampler=val_sampler,
         collate_fn=image_graph_collate_road_network_coco,
-        pin_memory=True
+        pin_memory=True,
+        drop_last=True # False면 마지막 에폭에서 아래 에러 발생
+        # RuntimeError: Sizes of tensors must match except in dimension 2.
+        # Expected size 4 but got size ot size 3 for tensor number 1 in the list.
         )
 
 
@@ -202,7 +205,6 @@ def main(args):
         matcher = matcher.to(device)
 
     # Loss = L_node + L_graph
-    # TODO 로스 파일 수정하기 일단 수정됨
     loss = SetCriterion(config, net, distributed=args.distributed).cuda(args.local_rank)
 
 

@@ -34,7 +34,7 @@ def min_max_normalize(image, percentile, nodata=-1.):
 
     return norm
 
-
+# 딕셔너리로 된 것을 텐서로 네 묶음을 만들어서 리스트에 넣어서 리턴
 def image_graph_collate_road_network_coco(batch):
     images = torch.stack([item['image'] for item in batch], 0).contiguous()
     heatmap = torch.stack([item['heatmap'] for item in batch], 0).contiguous()
@@ -180,13 +180,21 @@ class CrowdAI(Dataset):
         nodes = nodes / image.shape[0]
 
         image_idx = torch.tensor([idx])
-        image = resize(image, (320, 320, 3), anti_aliasing=True, preserve_range=True) # TODO 일단 300->320
+        image = resize(image, (320, 320, 3), anti_aliasing=True, preserve_range=True) # TODO 일단 300->320, 변형 정도 체크
         image = torch.from_numpy(image)
         image = image.float()
         image = image.permute(2,0,1) / 255.0
-        heatmap = torch.from_numpy(heatmap) / 255.0
-        
-        nodes = torch.tensor(nodes, dtype=torch.float)
+        heatmap = resize(image, (320, 320, 1), anti_aliasing=True, preserve_range=True)
+        heatmap = torch.from_numpy(heatmap)
+        heatmap = heatmap.float()
+        heatmap = heatmap.permute(2,0,1) / 255.0
+        # if len(nodes) > 256: # 정답 노드가 256개 초과인 경우
+        #     print("num_nodes:", len(nodes))
+        try:
+            nodes = torch.tensor(nodes, dtype=torch.float32)
+        except:
+            # print("Error! nodes:", nodes) # 노드가 0개인 에러
+            pass
         edges = torch.tensor(edges, dtype=torch.long)
 
         sample = {
@@ -203,6 +211,12 @@ class CrowdAI(Dataset):
 
     def __getitem__(self, idx):
         sample = self.loadSample(idx)
+        number_of_nodes = len(sample['nodes']) # 1~256
+        while number_of_nodes == 0 or number_of_nodes > 256: # 0 or > 256
+            idx_new = random.randint(0, self.len-1)
+            # print("Pick new one")
+            sample = self.loadSample(idx_new)
+            number_of_nodes = len(sample['nodes'])
         return sample
 
 

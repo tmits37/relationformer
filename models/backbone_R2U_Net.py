@@ -70,13 +70,12 @@ class RRCNN_block(nn.Module):
         return x+x1
 
 
-class R2U_Net(nn.Module): # Residual U-Net model 백본 + 1x1 CNN
+class R2U_Net(nn.Module): # Residual U-Net model 백본 + 1x1 CNN, deprecated
     def __init__(self,img_ch=3,t=1):
         super(R2U_Net,self).__init__()
         
         self.Maxpool = nn.MaxPool2d(kernel_size=2,stride=2)
         self.Upsample = nn.Upsample(scale_factor=2)
-        # self.Sigmoid = nn.Sigmoid()
 
         self.RRCNN1 = RRCNN_block(ch_in=img_ch,ch_out=64,t=t)
         self.RRCNN2 = RRCNN_block(ch_in=64,ch_out=128,t=t)
@@ -248,3 +247,29 @@ class NonMaxSuppression(nn.Module):
         # Sample top peaks
         graph = self.sample_peaks(x)
         return x, graph
+
+
+class Backbone(nn.Module):
+    def __init__(self, encoder, detectionBranch, config, device='cuda'):
+        super().__init__()
+        self.encoder = encoder
+        self.detectionBranch = detectionBranch
+
+    def forward(self, samples):
+        feature_map = self.encoder(samples)
+        vertices_detection_mask = self.detectionBranch(feature_map)
+
+        return vertices_detection_mask
+
+
+def build_Backbone(config, **kwargs):
+    encoder = R2U_Net_origin()
+    detectionBranch = DetectionBranch()
+    
+    model = Backbone(
+        encoder,
+        detectionBranch,
+        config,
+        **kwargs
+    )
+    return model

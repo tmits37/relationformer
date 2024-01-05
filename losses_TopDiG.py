@@ -42,15 +42,14 @@ class SetCriterion(nn.Module):
         """ sigmoid로 scores 한칸 한칸 값의 범위를 (0~1) 스케일로 바꿔주겠다
         TopDiG처럼 BCE 사용하겠습니다
         """
-        loss = self.loss_ce(output, target)
+        loss = self.loss_ce(output, target.float())
         return loss
 
-    def forward(self, out, target): # TODO out target I/O 따지기
+    def forward(self, pred_htm, tgt_htm, out, target):
         losses = {}
-        # TODO 밑에 두개의 out과 target이 서로 다른 것 같다
-        losses['node'] = self.loss_node(out, target)
+        losses['node'] = self.loss_node(pred_htm, tgt_htm)
         losses['graph'] = self.loss_graph(out, target)
         
-        losses['total'] = sum([losses[key]*self.weight_dict[key] for key in self.losses])
+        losses['total'] = sum([losses[key]*self.weight_dict[key] for key in self.losses]) # 왜 곱을 합하지?
 
         return losses

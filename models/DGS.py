@@ -90,18 +90,26 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
             if k<n:
                 tmp2 = {edge[0]: edge[1] for edge in edges}
                 for i, j in edges:
+                    circle = set()
                     if i not in tmp:
-                        while i not in tmp:
+                        while i not in tmp and i not in circle:
+                            circle.add(i)
                             i = tmp2[i]
+                        if i not in tmp: # 무한 루프 방지 조건
+                            continue
+                    circle = set()
                     if j not in tmp:
-                        while j not in tmp:
+                        while j not in tmp and j not in circle:
+                            circle.add(j)
                             j = tmp2[j]
+                        if j not in tmp: # 무한 루프 방지 조건
+                            continue
                     if tmp[i] != tmp[j]:
                         sample_edge.append([tmp[i],tmp[j]])
             else:
                 sample_edge = [[tmp[i],tmp[j]] for i, j in edges]
             sample_edges.append(sample_edge)
-            result.append(torch.tensor(generate_directed_adjacency_matrix(sample_edge, tmp, k), device=outputs.device)) # 디바이스 맞추기
+            result.append(torch.tensor(generate_directed_adjacency_matrix(sample_edge, tmp, k), device=out_nodes.device))
         return torch.stack(result)
 
 

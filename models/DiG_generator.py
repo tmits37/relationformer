@@ -119,7 +119,7 @@ class ConnectionNet(nn.Module):
         d_final = self.transformer_encoder(d_init)
         return d_final
 
-def scores_to_permutations(scores):
+def scores_to_permutations(scores): # 인퍼런스용 함수
     """
     Input a batched array of scores and returns the hungarian optimized 
     permutation matrices.
@@ -152,35 +152,35 @@ class DiG_generator(nn.Module):
         
 
     def forward(self, detected_node, visual_descriptor):
-        print("detected_node:", type(detected_node)) # detected_node는 튜플
-        print("visual_descriptor:", visual_descriptor.shape)
+        # print("detected_node:", type(detected_node)) # detected_node는 튜플
+        # print("visual_descriptor:", visual_descriptor.shape)
         # B, N, _ = detected_node.shape
         # B, N, D = visual_descriptor.shape
 
         # 1. it firstly concatenates each coupled d_i and v_i to embedded descriptors d_emb; N D+2.
         d_emb = torch.cat((visual_descriptor, detected_node), dim=2) # d_emb; B N D+2
-        print("d_emb:", d_emb.shape) # 64, 256, 66
+        # print("d_emb:", d_emb.shape) # 64, 256, 66
 
         # 2. A MLP is then utilized to encode the d_emb and
         # produce the D' dimensional initial descriptors d_init; B N D'.
         d_init = self.mlp(d_emb) # d_init; B N D'
-        print("d_init:", d_init.shape) # 64 256 768
+        # print("d_init:", d_init.shape) # 64 256 768
 
         # 3. d_init is fed into a connection network that consists of M(2) transformer encoder layers
         # to yield final descriptors d_final; N D'.
         d_final = self.connectionNet(d_init) # d_final; N D'
-        print("d_final:", d_final.shape) # 64 256 768
+        # print("d_final:", d_final.shape) # 64 256 768
 
         # 4. Two Graph heads; they receive the d_final and predict two adj_graphs A; N N and B; N N.
         # 시간이 오래 걸리는데 cuda로 디바이스 변경해서 실행해봐야 할 듯
         scores_1 = self.graphHead1(d_final) # B N N
-        print("scores_1: ", scores_1.shape)
+        # print("scores_1: ", scores_1.shape)
         scores_2 = self.graphHead2(d_final) # B N N
-        print("scores_2: ", scores_2.shape)
+        # print("scores_2: ", scores_2.shape)
 
         # 5. add up to export the A_final
         scores = scores_1 + torch.transpose(scores_2, 1, 2)
-        print(scores.unique())
+        # print(scores.unique())
 
         # 6. Sinkhorn 알고리즘 적용 for polygon-shape target TODO 이거는 시각화 하기위해 좌표 찍는 과정
         # 어차피 트레인 시에는 scores 행렬로 loss 계산할거기 때문에

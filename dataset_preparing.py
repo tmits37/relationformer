@@ -158,9 +158,6 @@ def raster_to_polygons(raster, window, min_patch_objs=3, tolerance=1.2):
     return gdf_ori
 
 
-
-
-
 def get_coords_from_densifing_points(gdf, gap_distance=10):
     p_gdf = gdf.copy()
     origin_coordinates = []
@@ -203,12 +200,17 @@ def get_coords_from_densifing_points(gdf, gap_distance=10):
         coordinates.append(nms_coords)
         
         nms_coords = np.concatenate([nms_coords, nms_coords[:1]], axis=0).tolist()
-        nms_poly = Polygon(nms_coords)
-        polygons.append(nms_poly)
+        if len(nms_coords) > 3:
+            nms_poly = Polygon(nms_coords)
+            polygons.append(nms_poly)
+        else: # 폴리곤인 점, 선인 경우
+            # print('Exception! nms_coords:', nms_coords)
+            polygons.append(None)
 
     coordinates = np.concatenate(coordinates, axis=0)
     p_gdf['geometry'] = polygons
-    return coordinates, p_gdf
+    n_gdf = p_gdf.dropna(how='any')
+    return coordinates, n_gdf
 
 
 def generate_heatmap(coords, shape, sigma=1):

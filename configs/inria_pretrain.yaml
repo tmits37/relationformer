@@ -11,16 +11,14 @@ DATA:
 
 TRAIN:
   EPOCHS: &epoch 200
-  LR: 1e-5
-  # LR_BACKBONE: 1e-4
-  WEIGHT_DECAY: 1e-6
+  LR: 5e-6
+  WEIGHT_DECAY: 5e-7
   LR_DROP: *epoch
-  # CLIP_MAX_NORM: 0.1  # hardcoded
 
   SAVE_PATH: "./work_dirs/R2U_Net_pretrain/"          # save path for the checkpoint, log and val results
   VAL_INTERVAL: 10                  # validation interval
   SAVE_VAL: False                   # save validation data
 
 log:
-  exp_name: 'baseline_R2U_Net_pretrain_epoch200'
+  exp_name: 'baseline_R2U_Net_pretrain_epoch200_5e-6'
   message: "Baseline TopDig-Node-Detector for road network"

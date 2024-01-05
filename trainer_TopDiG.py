@@ -23,13 +23,10 @@ def train_epoch(model,
         max_iter_in_epoch = len(tepoch)
         for idx, batch in enumerate(tepoch):
             tepoch.set_description(f"Epoch {epoch}")
-            # TODO 코코스타일이 적용되는지 확인하기
-            # 그래야 배치에서 엣지가 나오는지 확인하고 
-            # losses에서 엣지들을 사용할 수 있는지 알 수 있다
-            images, seg, nodes, edges = batch
+            images, heatmap, nodes, edges = batch
 
             images = images.to(device) # 8, 3, 300, 300
-            seg = seg.to(device) # 8, 300, 300, 1
+            heatmap = heatmap.to(device) # 8, 300, 300, 1
             nodes = [node.to(device) for node in nodes] # 8, num_gt_nodes
             edges = [edge.to(device) for edge in edges] # 8, num_gt_edges
 
@@ -40,9 +37,8 @@ def train_epoch(model,
                 out = model(images)
                 pred = {'pred_nodes': (model.v[1]/320).to(device)}
                 gt = {'nodes': nodes, 'edges': edges}
-                adj_mat_label = matcher(pred, gt) # TODO 256*256 만들기
-                # losses = loss_fn(out, {'nodes': nodes, 'edges': edges})
-                losses = loss_fn(out, adj_mat_label)
+                adj_mat_label = matcher(pred, gt)
+                losses = loss_fn(model.h, heatmap, out, adj_mat_label)
                 loss = losses['total']
 
             scaler.scale(loss).backward()
@@ -81,19 +77,21 @@ def validate_epoch(
         max_iter_in_epoch = len(tepoch)
         for idx, batch in enumerate(tepoch):
             tepoch.set_description(f"Val: {epoch}")
-            images, _, nodes, edges = batch
+            images, heatmap, nodes, edges = batch
 
             images = images.to(device)
+            heatmap = heatmap.to(device)
             nodes = [node.to(device) for node in nodes]
             edges = [edge.to(device) for edge in edges]
 
-            adj_mat_label = matcher(pred, gt) # TODO
-
             out = model(images)
-            losses = loss_fn(out, adj_mat_label)
+            pred = {'pred_nodes': (model.v[1]/320).to(device)}
+            gt = {'nodes': nodes, 'edges': edges}
+            adj_mat_label = matcher(pred, gt)
+            losses = loss_fn(model.h, heatmap, out, adj_mat_label)
+
             loss = losses['total']
             total_loss += loss.item()
-
             if is_master:
                 iters = int(max_iter_in_epoch * (epoch - 1) / val_interval + idx)
                 writer.add_scalar('Val/Loss', loss.item() / len(images), iters)
