@@ -70,80 +70,9 @@ class RRCNN_block(nn.Module):
         return x+x1
 
 
-class R2U_Net(nn.Module): # Residual U-Net model 백본 + 1x1 CNN, deprecated
+class R2U_Net(nn.Module):
     def __init__(self,img_ch=3,t=1):
-        super(R2U_Net,self).__init__()
-        
-        self.Maxpool = nn.MaxPool2d(kernel_size=2,stride=2)
-        self.Upsample = nn.Upsample(scale_factor=2)
-
-        self.RRCNN1 = RRCNN_block(ch_in=img_ch,ch_out=64,t=t)
-        self.RRCNN2 = RRCNN_block(ch_in=64,ch_out=128,t=t)
-        self.RRCNN3 = RRCNN_block(ch_in=128,ch_out=256,t=t)
-        self.RRCNN4 = RRCNN_block(ch_in=256,ch_out=512,t=t)
-        self.RRCNN5 = RRCNN_block(ch_in=512,ch_out=1024,t=t)
-        
-        self.Up5 = up_conv(ch_in=1024,ch_out=512)
-        self.Up_RRCNN5 = RRCNN_block(ch_in=1024, ch_out=512,t=t)
-        
-        self.Up4 = up_conv(ch_in=512,ch_out=256)
-        self.Up_RRCNN4 = RRCNN_block(ch_in=512, ch_out=256,t=t)
-        
-        self.Up3 = up_conv(ch_in=256,ch_out=128)
-        self.Up_RRCNN3 = RRCNN_block(ch_in=256, ch_out=128,t=t)
-        
-        self.Up2 = up_conv(ch_in=128,ch_out=64)
-        self.Up_RRCNN2 = RRCNN_block(ch_in=128, ch_out=64,t=t)
-
-        self.Detection = DetectionBranch()
-
-
-    def forward(self,x):
-        # encoding path
-        x1 = self.RRCNN1(x)
-
-        x2 = self.Maxpool(x1)
-        x2 = self.RRCNN2(x2)
-        
-        x3 = self.Maxpool(x2)
-        x3 = self.RRCNN3(x3)
-
-        x4 = self.Maxpool(x3)
-        x4 = self.RRCNN4(x4)
-
-        x5 = self.Maxpool(x4)
-        x5 = self.RRCNN5(x5)
-
-        # decoding + concat path
-        d5 = self.Up5(x5)
-        d5 = torch.cat((x4,d5),dim=1)
-        d5 = self.Up_RRCNN5(d5)
-        
-        d4 = self.Up4(d5)
-        d4 = torch.cat((x3,d4),dim=1)
-        d4 = self.Up_RRCNN4(d4)
-
-        d3 = self.Up3(d4)
-        d3 = torch.cat((x2,d3),dim=1)
-        d3 = self.Up_RRCNN3(d3)
-
-        d2 = self.Up2(d3)
-        d2 = torch.cat((x1,d2),dim=1)
-        d2 = self.Up_RRCNN2(d2)
-
-        # print(d2.shape)
-        d1 = self.Detection(d2)
-        # print(d1.unique())
-
-        # d1 = self.Sigmoid(d1) # 결과를 0~1 사이로 바꾸기
-        # print(d0.unique())
-        # print(d1.shape)
-
-        return d1
-
-class R2U_Net_origin(nn.Module):
-    def __init__(self,img_ch=3,t=1):
-        super(R2U_Net_origin, self).__init__()
+        super(R2U_Net, self).__init__()
         
         self.Maxpool = nn.MaxPool2d(kernel_size=2,stride=2)
         self.Upsample = nn.Upsample(scale_factor=2)
@@ -250,25 +179,30 @@ class NonMaxSuppression(nn.Module):
 
 
 class Backbone(nn.Module):
-    def __init__(self, encoder, detectionBranch, config, device='cuda'):
+    def __init__(self, encoder, detectionBranch, nms, config, device='cuda'):
         super().__init__()
         self.encoder = encoder
         self.detectionBranch = detectionBranch
+        self.nms = nms
+        self.device = device
 
     def forward(self, samples):
         feature_map = self.encoder(samples)
         vertices_detection_mask = self.detectionBranch(feature_map)
+        vertices_positions = self.nms(vertices_detection_mask)
 
-        return vertices_detection_mask
+        return feature_map, vertices_detection_mask, vertices_positions
 
 
-def build_Backbone(config, **kwargs):
-    encoder = R2U_Net_origin()
+def build_backbone(config, **kwargs):
+    encoder = R2U_Net()
     detectionBranch = DetectionBranch()
+    nms = NonMaxSuppression()
     
     model = Backbone(
         encoder,
         detectionBranch,
+        nms,
         config,
         **kwargs
     )

@@ -184,7 +184,7 @@ class CrowdAI(Dataset):
         image = torch.from_numpy(image)
         image = image.float()
         image = image.permute(2,0,1) / 255.0
-        heatmap = resize(image, (320, 320, 1), anti_aliasing=True, preserve_range=True)
+        heatmap = resize(heatmap, (320, 320, 1), anti_aliasing=True, preserve_range=True)
         heatmap = torch.from_numpy(heatmap)
         heatmap = heatmap.float()
         heatmap = heatmap.permute(2,0,1) / 255.0
@@ -230,7 +230,7 @@ if __name__ == '__main__':
     data = next(iter(dataloader))
 
     image = data[0][1].detach().cpu().numpy().transpose(1,2,0)
-    heatmap =  data[1][1].detach().cpu().numpy()
+    heatmap = data[1][1].detach().cpu().numpy()
     nodes = data[2][1].detach().cpu().numpy() * image.shape[0]
     edges = data[3][1].detach().cpu().numpy()
 

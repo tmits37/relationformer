@@ -109,13 +109,11 @@ def dict2obj(dict1):
     return json.loads(json.dumps(dict1), object_hook=obj)
 
 
-def match_name_keywords(n, name_keywords):
-    out = False
-    for b in name_keywords:
-        if b in n:
-            out = True
-            break
-    return out
+def match_name_keywords(name, name_keywords):
+    for keyword in name_keywords:
+        if keyword == name.split('.')[0]:
+            return True
+    else: return False
 
 
 def main(args):
@@ -155,14 +153,14 @@ def main(args):
     )
     # TODO 일단은 훈련셋과 val셋 동일하게
     train_ds = dataset
-    val_ds = dataset
+    # val_ds = dataset
 
     if args.distributed:
         train_sampler = DistributedSampler(train_ds, shuffle=True)
-        val_sampler = DistributedSampler(val_ds, shuffle=False)
+        # val_sampler = DistributedSampler(val_ds, shuffle=False)
     else:
         train_sampler = torch.utils.data.RandomSampler(train_ds)
-        val_sampler = torch.utils.data.SequentialSampler(val_ds)
+        # val_sampler = torch.utils.data.SequentialSampler(val_ds)
 
 
     train_loader = DataLoader(
@@ -175,17 +173,17 @@ def main(args):
         drop_last=True
         )
 
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=int(config.DATA.BATCH_SIZE / args.world_size),
-        num_workers=int(config.DATA.NUM_WORKERS / args.world_size),
-        sampler=val_sampler,
-        collate_fn=image_graph_collate_road_network_coco,
-        pin_memory=True,
-        drop_last=True # False면 마지막 에폭에서 아래 에러 발생
-        # RuntimeError: Sizes of tensors must match except in dimension 2.
-        # Expected size 4 but got size ot size 3 for tensor number 1 in the list.
-        )
+    # val_loader = DataLoader(
+    #     val_ds,
+    #     batch_size=int(config.DATA.BATCH_SIZE / args.world_size),
+    #     num_workers=int(config.DATA.NUM_WORKERS / args.world_size),
+    #     sampler=val_sampler,
+    #     collate_fn=image_graph_collate_road_network_coco,
+    #     pin_memory=True,
+    #     drop_last=True # False면 마지막 에폭에서 아래 에러 발생
+    #     # RuntimeError: Sizes of tensors must match except in dimension 2.
+    #     # Expected size 4 but got size ot size 3 for tensor number 1 in the list.
+    #     )
 
 
     ### Setting the model
@@ -210,20 +208,18 @@ def main(args):
 
     ### Setting optimizer
     param_dicts = [
-        {
-            "params":
+        { # pretrained R2U-Net의 러닝 레이트, 112가지 파라미터
+            "params": 
                 [p for n, p in net.named_parameters()
-                 if not match_name_keywords(n, ["encoder.0"]) and not match_name_keywords(n, ['reference_points', 'sampling_offsets']) and p.requires_grad],
-            "lr": float(config.TRAIN.LR)
-        },
-        {
-            "params": [p for n, p in net.named_parameters() if match_name_keywords(n, ["encoder.0"]) and p.requires_grad],
+                 if match_name_keywords(n, ['backbone']) and p.requires_grad],
             "lr": float(config.TRAIN.LR_BACKBONE)
         },
-        {
-            "params": [p for n, p in net.named_parameters() if match_name_keywords(n, ['reference_points', 'sampling_offsets']) and p.requires_grad],
-            "lr": float(config.TRAIN.LR)*0.1
-        }
+        { # DiG_generator의 러닝 레이트, 58가지 파라미터
+            "params":
+                [p for n, p in net.named_parameters()
+                 if match_name_keywords(n, ['decoder']) and p.requires_grad],
+            "lr": float(config.TRAIN.LR)
+        },
     ]
 
     # 5.3 섹션에 Adam 사용한다고 적혀있음 TopDiG
@@ -233,13 +229,13 @@ def main(args):
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.TRAIN.LR_DROP)
     
-    # if args.resume:
-    #     checkpoint = torch.load(args.resume, map_location='cpu')
-    #     net.load_state_dict(checkpoint['net'])
-    #     optimizer.load_state_dict(checkpoint['optimizer'])
-    #     scheduler.load_state_dict(checkpoint['scheduler'])
-    #     last_epoch = scheduler.last_epoch
-    #     scheduler.step_size = config.TRAIN.LR_DROP
+    if args.resume: # 학습 재개 코드
+        checkpoint = torch.load(args.resume, map_location='cpu')
+        net.load_state_dict(checkpoint['net'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        scheduler.load_state_dict(checkpoint['scheduler'])
+        last_epoch = scheduler.last_epoch
+        scheduler.step_size = config.TRAIN.LR_DROP
 
 
     print("Check local rank or not")
@@ -274,18 +270,18 @@ def main(args):
             print(f"Epoch {epoch}, Training Loss: {train_loss}")
             print(f"Epoch {epoch}: Current learning rate = {current_lr}")
 
-        if is_master and (epoch % config.TRAIN.VAL_INTERVAL == 0):
-            validate_epoch(
-                net,
-                config=config,
-                data_loader=val_loader, 
-                matcher=matcher,
-                loss_fn=loss, 
-                device=device, 
-                epoch=epoch, 
-                val_interval=config.TRAIN.VAL_INTERVAL,
-                writer=writer, 
-                is_master=is_master)
+        # if is_master and (epoch % config.TRAIN.VAL_INTERVAL == 0):
+        #     validate_epoch(
+        #         net,
+        #         config=config,
+        #         data_loader=val_loader, 
+        #         matcher=matcher,
+        #         loss_fn=loss, 
+        #         device=device, 
+        #         epoch=epoch, 
+        #         val_interval=config.TRAIN.VAL_INTERVAL,
+        #         writer=writer, 
+        #         is_master=is_master)
         save_checkpoint(
             net,
             optimizer,

@@ -202,6 +202,6 @@ class DiG_generator(nn.Module):
 if __name__ == "__main__":
     dig = DiG_generator()
     dig.eval()
-    out = dig(v, d) # 엄청 느린데 cuda에 안 올린건지?
+    out = dig(v, d)
     print(out.shape)
     print(out.unique())

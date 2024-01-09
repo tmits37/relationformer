@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from dataset_inria import build_inria_data
 from dataloader_cocostyle import CrowdAI, image_graph_collate_road_network_coco
-from models.backbone_R2U_Net import R2U_Net, build_Backbone
+from models.backbone_R2U_Net import build_backbone
 from utils import image_graph_collate_road_network
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.distributed import DistributedSampler
@@ -184,8 +184,7 @@ def main(args):
 
 
     ### Setting the model
-    # net = R2U_Net() # .to(device), R2U Net 빌드하여 데이터 로더 투입
-    net = build_Backbone(config)
+    net = build_backbone(config)
     # matcher = build_matcher(config) # R2U Net은 매쳐 필요 없음
     if args.distributed:
         device = torch.device(f"cuda:{args.rank}")

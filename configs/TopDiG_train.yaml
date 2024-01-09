@@ -1,25 +1,24 @@
 DATA:
-  DIM: 2                  # data dimension
-  BATCH_SIZE: 4 #16
-  TEST_BATCH_SIZE: 8 #16
+  BATCH_SIZE: 16
   DATA_PATH: '/nas/tsgil/dataset/Inria_building/train/' # Path to dataset, could be overwritten by command line argument
   TEST_DATA_PATH: '/nas/tsgil/dataset/Inria_building/test/' # 두 폴더 파일 똑같은 것 같음
-  BACKBONE_PATH: '/nas/tsgil/gil/picked_backbone/epochs_200.pth'
+  BACKBONE_PATH: '/nas/tsgil/gil/picked_backbone/epochs_130_5e-6.pth'
+  BACKBONE_CONFIG_PATH: '/nas/tsgil/relationformer/configs/inria_pretrain.yaml'
   DATASET: 'Inria'     # Dataset name
-  IMG_SIZE: [300, 300]    # Input image size
-  NUM_WORKERS: 4          # Number of data loading threads
+  IMG_SIZE: [300, 300]    # Input image size resized [320, 320]
+  NUM_WORKERS: 16          # Number of data loading threads
   SEED: 10                # random seed for reproducibility
 
 TRAIN:
-  EPOCHS: &epoch 8
-  LR: 2e-4 # Loss 
-  LR_BACKBONE: 2e-4 # L_node
-  WEIGHT_DECAY: 2e-5
+  EPOCHS: &epoch 20
+  LR: 1e-4 # L_graph
+  LR_BACKBONE: 1e-6 # L_node
+  WEIGHT_DECAY: 1e-5
   LR_DROP: *epoch
 
-  SAVE_PATH: "./work_dirs/TopDiG_train/"          # save path for the checkpoint, log and val results
-  VAL_INTERVAL: 4                  # validation interval
-  SAVE_VAL: False                   # save validation data
+  SAVE_PATH: "./work_dirs/TopDiG_train/"  # save path for the checkpoint, log and val results
+  VAL_INTERVAL: *epoch                    # validation interval
+  SAVE_VAL: False                         # save validation data
 
   # loss weight
   # the loss functions specific weights referred by relationformer
@@ -29,5 +28,5 @@ TRAIN:
 
 
 log:
-  exp_name: 'baseline_TopDiG_train_epoch8_ptm'
+  exp_name: 'baseline_TopDiG_train_epoch20_ptm_new'
   message: "Baseline TopDig for Inria dataset"
