@@ -147,7 +147,7 @@ class NonMaxSuppression(nn.Module):
         B, _, H, W = x.shape
         for b in range(B):
             x_b = x[b,0]
-            idx = torch.topk(x_b.flatten(), self.n_peaks).indices
+            idx = torch.topk(x_b.flatten(), self.n_peaks).indices # 여기서 pred_node 순서가 생기는 듯
             idx_i = torch.div(idx, W, rounding_mode='floor')
             idx_j = idx % W
             idx = torch.cat((idx_i.unsqueeze(1), idx_j.unsqueeze(1)), dim=1)

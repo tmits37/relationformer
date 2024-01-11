@@ -119,7 +119,7 @@ class ConnectionNet(nn.Module):
         d_final = self.transformer_encoder(d_init)
         return d_final
 
-def scores_to_permutations(scores): # 인퍼런스용 함수
+def scores_to_permutations(scores): # 인퍼런스용 함수, 폴리월드에서 가져옴, 헝가리안 방식
     """
     Input a batched array of scores and returns the hungarian optimized 
     permutation matrices.
@@ -179,10 +179,19 @@ class DiG_generator(nn.Module):
         # print("scores_2: ", scores_2.shape)
 
         # 5. add up to export the A_final
-        scores = scores_1 + torch.transpose(scores_2, 1, 2)
-        # print(scores.unique())
+        # training
+        # scores = scores_1 + torch.transpose(scores_2, 1, 2) # TODO 스코어 2개 어떻게 더할지 고민
 
-        # 6. Sinkhorn 알고리즘 적용 for polygon-shape target TODO 이거는 시각화 하기위해 좌표 찍는 과정
+
+        # inference
+        # scores = torch.sigmoid(scores_1) + torch.sigmoid(torch.transpose(scores_2, 1, 2))
+        # for b in range(len(scores)):
+        #     diagonal = torch.diag(scores[b])/2
+        #     for i in range(diagonal.size(0)):
+        #         scores[b, i, i] = diagonal[i]
+        # scores = torch.sigmoid(scores)
+
+        # 6. Sinkhorn 알고리즘 적용 for polygon-shape target
         # 어차피 트레인 시에는 scores 행렬로 loss 계산할거기 때문에
         # predicted_adjacency_matrix = scores_to_permutations(scores) # 지금은 헝가리안 적용됨, matcher_sinkhorn.py 수정하여 적용할수도
         # 위 한 줄은 인퍼런스용임. 훈련용은 scores 리턴하면 된다.
@@ -195,7 +204,7 @@ class DiG_generator(nn.Module):
 
         # scores는 한칸 한칸 -무한대~무한대의 범위를 갖는 score로 이루어져 있다
         # loss_fn 안에서 softmax로 범위 조정 필요함
-        return scores
+        return scores_1, scores_2
     
 
 

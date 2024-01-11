@@ -42,18 +42,18 @@ class TopDiG(nn.Module):
         self.h = vertices_detection_mask
         self.v = vertices_positions
         visual_descriptor = self.descriptor_extraction(feature_map, vertices_positions[1]) # B, D, 256
-        predicted_adjacency_matrix = self.decoder(vertices_positions[1], visual_descriptor)
-        # predicted_adjacency_matrix = self.decoder(feature_map, vertices_positions[1]) # TODO 폴리월드 디코더
+        # scores1, scores2 = self.decoder(vertices_positions[1], visual_descriptor)
+        scores1, scores2 = self.decoder.predict(feature_map, vertices_positions[1]) # TODO 폴리월드 디코더
 
-        return predicted_adjacency_matrix
+        return scores1, scores2
 
 
 def build_TopDiG(config, **kwargs): # 일단 ptm 쓰는게 default인 상태
     pretrained_backbone = torch.load(config.DATA.BACKBONE_PATH, map_location='cpu')
     backbone = build_backbone(config.DATA.BACKBONE_CONFIG_PATH)
     backbone.load_state_dict(pretrained_backbone['model_state_dict'])
-    decoder = DiG_generator()
-    # decoder = OptimalMatching() # TODO 월요일에 백본 로드해도 학습 안 될 경우 갈아끼우기
+    # decoder = DiG_generator()
+    decoder = OptimalMatching() # TODO 월요일에 백본 로드해도 학습 안 될 경우 갈아끼우기
     
     model = TopDiG(
         backbone,

@@ -26,7 +26,7 @@ def generate_directed_adjacency_matrix(pairs_list, picked_nodes, k):
 
     return adjacency_matrix
 
-class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져옴
+class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져옴 헝가리안 방식
     """This class computes an assignment between the targets and the predictions of the network
 
     For efficiency reasons, the targets don't include the no_object. Because of this, in general,
@@ -36,7 +36,7 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
     def __init__(self):
         super().__init__()
 
-    @torch.no_grad()
+    @torch.no_grad() # 역전파 안 한다는 뜻
     def forward(self, outputs, targets, k=N):
         # outputs = {'pred_logits':..., 'pred_nodes':tensor(32, 128, 4)}
         # 32개의 배치, 128차원, 4개는 bbox_embed MLP 리턴값 느낌이 앞두개 한점, 뒤두개 다른점
@@ -70,7 +70,7 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         C = C.view(bs, num_queries, -1).cpu()
 
         sizes = [len(v) for v in targets['nodes']]
-        indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
+        indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))] # [(idx of pred_nodes),(idx of gt_nodes)]
         # 배치별로 나눠서 (32,128,24),(32,128,9)...
         # indices에 헝가리안 결과값 존재. 32개의 2차원 xy 리스트
         # 텐서로 담아서 리턴
@@ -78,38 +78,36 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         # return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
         # print(indices[1])
         result = []
-        mapping = []
         sample_edges = []
         k = len(outputs['pred_nodes'][0]) # N 을 따라감
-        for idx in range(bs):
-            tmp = {j:i for i,j in zip(indices[idx][0].tolist(),indices[idx][1].tolist())}
-            mapping.append(tmp)
-            edges = targets['edges'][idx].tolist()
+        for b in range(bs):
+            mapping = {j:i for i,j in zip(indices[b][0].tolist(),indices[b][1].tolist())} # gt_idx: pred_idx
+            edges = targets['edges'][b].tolist()
             n = len(edges) # 빌딩 수에 따라 히트맵 노드 수가 바뀐다
             sample_edge = []
-            if k<n:
-                tmp2 = {edge[0]: edge[1] for edge in edges}
+            if k<n: # 헝가리안 매쳐의 전제 조건에서 벗어나는 조건이긴 함 bs*q < n
+                edge_maps = {edge[0]: edge[1] for edge in edges} # 정답 엣지 start_idx: end_idx
                 for i, j in edges:
                     circle = set()
-                    if i not in tmp:
-                        while i not in tmp and i not in circle:
+                    if i not in mapping:
+                        while i not in mapping and i not in circle:
                             circle.add(i)
-                            i = tmp2[i]
-                        if i not in tmp: # 무한 루프 방지 조건
+                            i = edge_maps[i]
+                        if i not in mapping: # 무한 루프 방지 조건
                             continue
                     circle = set()
-                    if j not in tmp:
-                        while j not in tmp and j not in circle:
+                    if j not in mapping:
+                        while j not in mapping and j not in circle:
                             circle.add(j)
-                            j = tmp2[j]
-                        if j not in tmp: # 무한 루프 방지 조건
+                            j = edge_maps[j]
+                        if j not in mapping: # 무한 루프 방지 조건
                             continue
-                    if tmp[i] != tmp[j]:
-                        sample_edge.append([tmp[i],tmp[j]])
+                    if mapping[i] != mapping[j]:
+                        sample_edge.append([mapping[i],mapping[j]])
             else:
-                sample_edge = [[tmp[i],tmp[j]] for i, j in edges]
+                sample_edge = [[mapping[i],mapping[j]] for i, j in edges]
             sample_edges.append(sample_edge)
-            result.append(torch.tensor(generate_directed_adjacency_matrix(sample_edge, tmp, k), device=out_nodes.device))
+            result.append(torch.tensor(generate_directed_adjacency_matrix(sample_edge, mapping, k), device=out_nodes.device))
         return torch.stack(result)
 
 

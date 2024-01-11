@@ -34,11 +34,11 @@ def train_epoch(model,
             # [0]: 256개 중에 gt 노드 개수만큼 뽑기, [1]: pred와 매칭되게 순서맞게 arrange
 
             with torch.cuda.amp.autocast():
-                out = model(images)
+                scores1, scores2 = model(images)
                 pred = {'pred_nodes': (model.v[1]/320).to(device)}
                 gt = {'nodes': nodes, 'edges': edges}
                 adj_mat_label = matcher(pred, gt)
-                losses = loss_fn(model.h, heatmap, out, adj_mat_label)
+                losses = loss_fn(model.h, heatmap, scores1, scores2, adj_mat_label)
                 loss = losses['total']
 
             scaler.scale(loss).backward()
@@ -50,7 +50,8 @@ def train_epoch(model,
                 iters = int(max_iter_in_epoch * (epoch - 1) + idx)
                 writer.add_scalar('Train/Loss', loss.item() / len(images), iters)
                 writer.add_scalar('Train/Loss/node', losses['node'].item() / len(images), iters)
-                writer.add_scalar('Train/Loss/graph', losses['graph'].item() / len(images), iters)
+                writer.add_scalar('Train/Loss/graph1', losses['graph1'].item() / len(images), iters)
+                writer.add_scalar('Train/Loss/graph2', losses['graph2'].item() / len(images), iters)
             
             tepoch.set_postfix(loss=loss.item() / len(images))
 
@@ -84,11 +85,11 @@ def validate_epoch(
             nodes = [node.to(device) for node in nodes]
             edges = [edge.to(device) for edge in edges]
 
-            out = model(images)
+            scores1, scores2 = model(images)
             pred = {'pred_nodes': (model.v[1]/320).to(device)}
             gt = {'nodes': nodes, 'edges': edges}
             adj_mat_label = matcher(pred, gt)
-            losses = loss_fn(model.h, heatmap, out, adj_mat_label)
+            losses = loss_fn(model.h, heatmap, scores1, scores2, adj_mat_label)
 
             loss = losses['total']
             total_loss += loss.item()
@@ -96,7 +97,8 @@ def validate_epoch(
                 iters = int(max_iter_in_epoch * (epoch - 1) / val_interval + idx)
                 writer.add_scalar('Val/Loss', loss.item() / len(images), iters)
                 writer.add_scalar('Val/Loss/node', losses['node'].item() / len(images), iters)
-                writer.add_scalar('Val/Loss/graph', losses['graph'].item() / len(images), iters)
+                writer.add_scalar('Train/Loss/graph1', losses['graph1'].item() / len(images), iters)
+                writer.add_scalar('Train/Loss/graph2', losses['graph2'].item() / len(images), iters)
 
             tepoch.set_postfix(loss=loss.item() / len(images))
 

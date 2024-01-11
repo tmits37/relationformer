@@ -198,6 +198,7 @@ class OptimalMatching(nn.Module):
         # Compute scores 옵티멀 커넥션 네트워크
         scores_1 = self.scorenet1(sel_desc) # 시계방향 스코어
         scores_2 = self.scorenet2(sel_desc) # 반시계 스코어
+        return scores_1, scores_2
         scores = scores_1 + torch.transpose(scores_2, 1, 2) # 합
 
         scores = scores_to_permutations(scores) # 스코어 합을 permutation matrix로 만들기 (B,N,N) shape

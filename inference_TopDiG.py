@@ -41,11 +41,12 @@ def min_max_normalize(image, percentile, nodata=-1.):
 
 if __name__ == "__main__":
     dir_name_ = 'epochs_'
-    for i in range(1, 11):
+    for i in range(1, 10):
         dir_name = dir_name_ + str(i*2)
+        # dir_name = dir_name_ + str(18)
         config_file = "/nas/tsgil/relationformer/configs/TopDiG_train.yaml"
-        ckpt_path = f"/nas/tsgil/relationformer/work_dirs/TopDiG_train/runs/baseline_TopDiG_train_epoch20_ptm_10/models/{dir_name}.pth"
-        show_dir = f'/nas/tsgil/gil/infer_TopDiG/exp1/{dir_name}'
+        ckpt_path = f"/nas/tsgil/relationformer/work_dirs/TopDiG_train/runs/baseline_TopDiG_train_epoch20_ptm_new_10/models/{dir_name}.pth"
+        show_dir = f'/nas/tsgil/gil/infer_TopDiG/exp2/{dir_name}'
 
         with open(config_file) as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -75,7 +76,15 @@ if __name__ == "__main__":
         device = torch.device("cuda")
         model = model.to(device)
         model.train() # eval() 시에는 모델 아웃풋이 안좋음
-        # model.eval() # eval() 시에는 모델 아웃풋이 안좋음
+        # model.eval()
+
+        checkpoint = torch.load(ckpt_path, map_location='cpu') # 학습한 TopDiG 불러오기
+        missing_keys, unexpected_keys = model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
+        if len(missing_keys) > 0:
+            print('Missing Keys: {}'.format(missing_keys))
+        if len(unexpected_keys) > 0:
+            print('Unexpected Keys: {}'.format(unexpected_keys))
 
         if not os.path.isdir(show_dir):
             os.makedirs(show_dir)
@@ -123,6 +132,7 @@ if __name__ == "__main__":
                 # 네 번째 서브플롯 - pred_image
                 axes[1, 1].imshow(min_max_normalize(image, 0.5))
                 axes[1, 1].scatter(out_nodes[i][:, 1], out_nodes[i][:, 0], color='r')
+                # TODO 엣지 추가하기
                 axes[1, 1].set_title('pred_image')
 
                 # 서브플롯 간 간격 조절 (선택 사항)

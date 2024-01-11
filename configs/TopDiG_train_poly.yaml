@@ -33,5 +33,5 @@ TRAIN:
 
 
 log:
-  exp_name: 'baseline_TopDiG_train_epoch20_scores_split'
+  exp_name: 'baseline_TopDiG_train_epoch20_poly'
   message: "Baseline TopDig for Inria dataset"
