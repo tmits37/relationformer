@@ -9,11 +9,6 @@ DATA:
   NUM_WORKERS: 16          # Number of data loading threads
   SEED: 10                # random seed for reproducibility
 
-MODEL:
-  MATCHER: # 헝가리안 매쳐한테 가중치를 줘야 할지?
-    C_NODE: 5
-    C_CLASS: 3
-
 TRAIN:
   EPOCHS: &epoch 20
   LR: 1e-4 # L_graph
@@ -33,5 +28,5 @@ TRAIN:
 
 
 log:
-  exp_name: 'baseline_TopDiG_train_epoch20_scores_split'
+  exp_name: 'baseline_TopDiG_train_epoch20_weighted_ce'
   message: "Baseline TopDig for Inria dataset"

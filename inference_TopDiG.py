@@ -45,8 +45,8 @@ if __name__ == "__main__":
         dir_name = dir_name_ + str(i*2)
         # dir_name = dir_name_ + str(18)
         config_file = "/nas/tsgil/relationformer/configs/TopDiG_train.yaml"
-        ckpt_path = f"/nas/tsgil/relationformer/work_dirs/TopDiG_train/runs/baseline_TopDiG_train_epoch20_ptm_new_10/models/{dir_name}.pth"
-        show_dir = f'/nas/tsgil/gil/infer_TopDiG/exp2/{dir_name}'
+        ckpt_path = f"/nas/tsgil/relationformer/work_dirs/TopDiG_train/runs/baseline_TopDiG_train_epoch20_scores_split_10/models/{dir_name}.pth"
+        show_dir = f'/nas/tsgil/gil/infer_TopDiG/exp3/{dir_name}'
 
         with open(config_file) as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -71,7 +71,6 @@ if __name__ == "__main__":
         print(len(dataset), len(val_loader))
 
         model = build_TopDiG(config)
-        # print(model.backbone.detectionBranch.conv[1].running_mean) # 배치 정규화에 대한 learnable 파라미터
         
         device = torch.device("cuda")
         model = model.to(device)
@@ -97,8 +96,7 @@ if __name__ == "__main__":
             images = images.cuda()
 
             with torch.no_grad():
-                out = model(images)
-                # print(model.backbone.detectionBranch.conv[1].running_mean) # 배치 정규화에 대한 learnable 파라미터
+                scores1, scores2 = model(images)
                 out_nodes = model.v[1].detach().cpu().numpy()
                 out_heatmaps = model.h
 

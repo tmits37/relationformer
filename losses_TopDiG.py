@@ -31,6 +31,7 @@ class SetCriterion(nn.Module):
             }
         self.loss_weighted_ce = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([100]).cuda()) # 100에서 조정가능
         self.loss_ce = nn.BCEWithLogitsLoss()
+        # TODO mask weight 만들기 B N N 해서 위에 넣기
         
     def loss_node(self, output, target):
         """ pretrain처럼 PolyWorld와 같은 weighted BCE 사용하겠습니다
@@ -38,19 +39,20 @@ class SetCriterion(nn.Module):
         loss = self.loss_weighted_ce(output, target)
         return loss
     
-    def loss_graph(self, scores1, scores2, target):
+    def loss_graph(self, scores1, scores2, target, masked_mat):
         """ sigmoid로 scores 한칸 한칸 값의 범위를 (0~1) 스케일로 바꿔주겠다
         TopDiG처럼 BCE 사용하겠습니다
         """
+        masked_loss_ce = nn.BCEWithLogitsLoss(weight=masked_mat)
         target_transposed = target.transpose(1, 2) # 역방향 라벨
-        loss1 = self.loss_ce(scores1, target.float())
-        loss2 = self.loss_ce(scores2, target_transposed.float())
+        loss1 = masked_loss_ce(scores1, target.float())
+        loss2 = masked_loss_ce(scores2, target_transposed.float())
         return loss1, loss2
 
-    def forward(self, pred_htm, tgt_htm, scores1, scores2, target):
+    def forward(self, pred_htm, tgt_htm, scores1, scores2, target, masked_mat):
         losses = {}
         losses['node'] = self.loss_node(pred_htm, tgt_htm)
-        losses['graph1'], losses['graph2'] = self.loss_graph(scores1, scores2, target)
+        losses['graph1'], losses['graph2'] = self.loss_graph(scores1, scores2, target, masked_mat)
         
         losses['total'] = losses['node']*self.weight_dict['node'] + losses['graph1']*self.weight_dict['graph'] + losses['graph2']*self.weight_dict['graph']
         # losses['total'] = sum([losses[key]*self.weight_dict[key] for key in self.losses]) # 왜 곱을 합하지?

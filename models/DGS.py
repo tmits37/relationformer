@@ -23,8 +23,18 @@ def generate_directed_adjacency_matrix(pairs_list, picked_nodes, k):
     for i in range(k):
         if i not in picked_nodes:
             adjacency_matrix[i, i] = 1
+    # 로스 계산 시에 매칭 안된 노드를 학습하지 않도록 하는 마스크 행렬 B N N
+    masked_matrix = np.ones((k, k), dtype=int)
+    for i in range(k):
+        if i not in picked_nodes:
+            for j in range(k):
+                masked_matrix[i,j] = 0
+    for j in range(k):
+        if j not in picked_nodes:
+            for i in range(k):
+                masked_matrix[i,j] = 0
 
-    return adjacency_matrix
+    return adjacency_matrix, masked_matrix
 
 class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져옴 헝가리안 방식
     """This class computes an assignment between the targets and the predictions of the network
@@ -53,6 +63,11 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         # Compute the L1 cost between nodes
         cost_nodes = torch.cdist(out_nodes, tgt_nodes, p=1) # 4096, 722, L1 로스값 텐서
 
+
+        # threshold = 0.1
+        # mask = cost_nodes > threshold
+        # cost_nodes[mask] = 10000
+
         # Compute the cls cost
         # tgt_ids = torch.cat([torch.tensor([1]*v.shape[0]).to(out_nodes.device) for v in targets['nodes']]) # [1]*551
         # v는 32개의 배치인데 하나마다 타겟 노드들 들고 있음
@@ -66,8 +81,8 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         # cost_nodes: 3, cost_class: 5
         # C = self.cost_nodes * cost_nodes + self.cost_class * cost_class # 4096,722 + 4096,722
         # 우리는 로짓을 모른다
-        C = cost_nodes # 4096,722
-        C = C.view(bs, num_queries, -1).cpu()
+        C = cost_nodes # 4096,1049
+        C = C.view(bs, num_queries, -1).cpu() # 16,256,1049
 
         sizes = [len(v) for v in targets['nodes']]
         indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))] # [(idx of pred_nodes),(idx of gt_nodes)]
@@ -78,6 +93,7 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         # return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
         # print(indices[1])
         result = []
+        masked = []
         sample_edges = []
         k = len(outputs['pred_nodes'][0]) # N 을 따라감
         for b in range(bs):
@@ -107,8 +123,10 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
             else:
                 sample_edge = [[mapping[i],mapping[j]] for i, j in edges]
             sample_edges.append(sample_edge)
-            result.append(torch.tensor(generate_directed_adjacency_matrix(sample_edge, mapping, k), device=out_nodes.device))
-        return torch.stack(result)
+            adj_mat_label, masked_mat = generate_directed_adjacency_matrix(sample_edge, mapping, k)
+            result.append(torch.tensor(adj_mat_label, device=out_nodes.device))
+            masked.append(torch.tensor(masked_mat, device=out_nodes.device))
+        return torch.stack(result), torch.stack(masked)
 
 
 if __name__ == "__main__":
@@ -265,7 +283,7 @@ if __name__ == "__main__":
             else:
                 tmp.append([i, i+1])
         target['edges'].append(torch.tensor(tmp))
-    out = matcher(output, target)
+    out, mask = matcher(output, target)
     # print('target_edges:', target['edges'])
     # print(out)
     # print(out[0][0])
@@ -277,4 +295,8 @@ if __name__ == "__main__":
     print('out')
     for i in range(len(out)):
         print(out[i])
+
+    print()
+    for i in range(len(mask)):
+        print(mask[i])
 

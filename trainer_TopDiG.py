@@ -37,8 +37,8 @@ def train_epoch(model,
                 scores1, scores2 = model(images)
                 pred = {'pred_nodes': (model.v[1]/320).to(device)}
                 gt = {'nodes': nodes, 'edges': edges}
-                adj_mat_label = matcher(pred, gt)
-                losses = loss_fn(model.h, heatmap, scores1, scores2, adj_mat_label)
+                adj_mat_label, masked_mat = matcher(pred, gt) 
+                losses = loss_fn(model.h, heatmap, scores1, scores2, adj_mat_label, masked_mat)
                 loss = losses['total']
 
             scaler.scale(loss).backward()
@@ -88,8 +88,8 @@ def validate_epoch(
             scores1, scores2 = model(images)
             pred = {'pred_nodes': (model.v[1]/320).to(device)}
             gt = {'nodes': nodes, 'edges': edges}
-            adj_mat_label = matcher(pred, gt)
-            losses = loss_fn(model.h, heatmap, scores1, scores2, adj_mat_label)
+            adj_mat_label, masked_mat = matcher(pred, gt)
+            losses = loss_fn(model.h, heatmap, scores1, scores2, adj_mat_label, masked_mat)
 
             loss = losses['total']
             total_loss += loss.item()
