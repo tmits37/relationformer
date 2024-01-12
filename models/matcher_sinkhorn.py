@@ -6,61 +6,68 @@ import torch
 from scipy.optimize import linear_sum_assignment
 from torch import nn
 
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-class SinkhornMatcher(nn.Module): # TODO 수정해야 함, 논문 구현체에서 가져올수도, 아직 이름만 바꾼 상태
-    """This class computes an assignment between the targets and the predictions of the network
 
-    For efficiency reasons, the targets don't include the no_object. Because of this, in general,
-    there are more predictions than targets. In this case, we do a 1-to-1 matching of the best predictions,
-    while the others are un-matched (and thus treated as non-objects).
+class Sinkhorn(torch.autograd.Function):
     """
+    An implementation of a Sinkhorn layer with our custom backward module, based on implicit differentiation
+    :param c: input cost matrix, size [*,m,n], where * are arbitrarily many batch dimensions
+    :param a: first input marginal, size [*,m] 행에 대해서 합을 1로 맞추기 위한 스케일링용 행렬
+    :param b: second input marginal, size [*,n] 열에 대해서 합을 1로 맞추기 위한 스케일링용 행렬 
+    :param num_sink: number of Sinkhorn iterations
+    :param lambd_sink: entropy regularization weight 행에서 칸마다 코스트의 차이가 작거나 클 경우를 위한 정규화
+    :return: optimized soft permutation matrix
+    """
+    @staticmethod
+    def forward(ctx, c, a, b, num_sink, lambd_sink):
+        log_p = -c / lambd_sink
+        log_a = torch.log(a).unsqueeze(dim=-1)
+        log_b = torch.log(b).unsqueeze(dim=-2)
+        for _ in range(num_sink):
+            log_p -= (torch.logsumexp(log_p, dim=-2, keepdim=True) - log_b)
+            log_p -= (torch.logsumexp(log_p, dim=-1, keepdim=True) - log_a)
+        p = torch.exp(log_p)
 
-    def __init__(self, config):
-        """Creates the matcher
+        ctx.save_for_backward(p, torch.sum(p, dim=-1), torch.sum(p, dim=-2))
+        ctx.lambd_sink = lambd_sink
+        return p
 
-        Params:
-            cost_class: This is the relative weight of the classification error in the matching cost
-            cost_bbox: This is the relative weight of the L1 error of the bounding box coordinates in the matching cost
-            cost_giou: This is the relative weight of the giou loss of the bounding box in the matching cost
-        """
-        super().__init__()
-        self.cost_nodes = config.MODEL.MATCHER.C_NODE # 3
-        self.cost_class = config.MODEL.MATCHER.C_CLASS # 5
+    @staticmethod
+    def backward(ctx, grad_p):
+        p, a, b = ctx.saved_tensors
 
-    @torch.no_grad()
-    def forward(self, outputs, targets):
-        """[summary]
+        m, n = p.shape[-2:]
+        batch_shape = list(p.shape[:-2])
 
-        Args:
-            outputs ([type]): [description]
-            targets ([type]): [description]
-
-        Returns:
-            [type]: [description]
-        """
-        bs, num_queries = outputs['pred_nodes'].shape[:2]
-
-        # We flatten to compute the cost matrices in a batch
-        out_nodes = outputs['pred_nodes'][...,:2].flatten(0, 1)  # [batch_size * num_queries, 2]
-
-        # Also concat the target labels and boxes
-        tgt_nodes = torch.cat([v for v in targets['nodes']])
-
-        # Compute the L1 cost between nodes
-        cost_nodes = torch.cdist(out_nodes, tgt_nodes, p=1)
-
-        # Compute the cls cost
-        tgt_ids = torch.cat([torch.tensor([1]*v.shape[0]).to(out_nodes.device) for v in targets['nodes']])
-        cost_class = -outputs["pred_logits"].flatten(0, 1).softmax(-1)[..., tgt_ids]
-
-        # Final cost matrix
-        C = self.cost_nodes * cost_nodes + self.cost_class * cost_class
-        C = C.view(bs, num_queries, -1).cpu()
-
-        sizes = [len(v) for v in targets['nodes']]
-        indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
-        return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
+        grad_p *= -1 / ctx.lambd_sink * p
+        K = torch.cat((torch.cat((torch.diag_embed(a), p), dim=-1),
+                       torch.cat((p.transpose(-2, -1), torch.diag_embed(b)), dim=-1)), dim=-2)[..., :-1, :-1]
+        t = torch.cat((grad_p.sum(dim=-1), grad_p[..., :, :-1].sum(dim=-2)), dim=-1).unsqueeze(-1)
+        grad_ab, _ = torch.solve(t, K)
+        grad_a = grad_ab[..., :m, :]
+        grad_b = torch.cat((grad_ab[..., m:, :], torch.zeros(batch_shape + [1, 1], device=DEVICE, dtype=torch.float32)), dim=-2)
+        U = grad_a + grad_b.transpose(-2, -1)
+        grad_p -= p * U
+        grad_a = -ctx.lambd_sink * grad_a.squeeze(dim=-1)
+        grad_b = -ctx.lambd_sink * grad_b.squeeze(dim=-1)
+        return grad_p, grad_a, grad_b, None, None, None
 
 
-def build_matcher(config):
-    return SinkhornMatcher(config)
+if __name__ == '__main__':
+    c = torch.rand((2, 5, 5)).cuda()
+    # tmp = [[[1,7,3],[5,10,4],[7,4,1]]]
+    # c = torch.tensor(tmp).cuda()
+    a = torch.ones(2, 5).cuda()
+    b = torch.ones(2, 5).cuda()
+    # a = torch.ones(1, 3).cuda()
+    # b = torch.ones(1, 3).cuda()
+    p = Sinkhorn.apply(c, a, b, 100, 100)
+    print(c)
+    print(p.size())
+    dims = p.size()
+    print(p)
+    for b in range(dims[0]):
+        for row in range(dims[1]):
+            print(sum(p[b][row]))
+    
