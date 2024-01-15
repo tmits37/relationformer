@@ -203,7 +203,7 @@ def main(args):
         matcher = matcher.to(device)
 
     # Loss = L_node + L_graph
-    loss = SetCriterion(config, net, distributed=args.distributed).cuda(args.local_rank)
+    loss = SetCriterion(config, matcher, net, distributed=args.distributed).cuda(args.local_rank)
 
 
     ### Setting optimizer
@@ -256,8 +256,7 @@ def main(args):
     for epoch in range(1, n_epochs+1):
         train_loss = train_epoch(
             net,
-            data_loader=train_loader, 
-            matcher=matcher,
+            data_loader=train_loader,
             loss_fn=loss, 
             optimizer=optimizer, 
             device=device, 
@@ -274,8 +273,7 @@ def main(args):
         #     validate_epoch(
         #         net,
         #         config=config,
-        #         data_loader=val_loader, 
-        #         matcher=matcher,
+        #         data_loader=val_loader,
         #         loss_fn=loss, 
         #         device=device, 
         #         epoch=epoch, 

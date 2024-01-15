@@ -6,7 +6,6 @@ import torch
 
 def train_epoch(model,
                 data_loader,
-                matcher, 
                 loss_fn, 
                 optimizer, 
                 device, 
@@ -15,7 +14,6 @@ def train_epoch(model,
                 is_master
                 ):
     model.train()
-    matcher.train()
 
     total_loss = 0
     scaler = torch.cuda.amp.GradScaler()
@@ -23,10 +21,10 @@ def train_epoch(model,
         max_iter_in_epoch = len(tepoch)
         for idx, batch in enumerate(tepoch):
             tepoch.set_description(f"Epoch {epoch}")
-            images, heatmap, nodes, edges = batch
+            images, heatmaps, nodes, edges = batch
 
             images = images.to(device) # 8, 3, 300, 300
-            heatmap = heatmap.to(device) # 8, 300, 300, 1
+            heatmaps = heatmaps.to(device) # 8, 300, 300, 1
             nodes = [node.to(device) for node in nodes] # 8, num_gt_nodes
             edges = [edge.to(device) for edge in edges] # 8, num_gt_edges
 
@@ -35,10 +33,11 @@ def train_epoch(model,
 
             with torch.cuda.amp.autocast():
                 scores1, scores2 = model(images)
-                pred = {'pred_nodes': (model.v[1]/320).to(device)}
-                gt = {'nodes': nodes, 'edges': edges}
-                adj_mat_label, masked_mat = matcher(pred, gt) 
-                losses = loss_fn(model.h, heatmap, scores1, scores2, adj_mat_label, masked_mat)
+                pred = {'pred_nodes': (model.v[1]/320).to(device), 'pred_heatmaps': model.h, 'scores1': scores1, 'scores2': scores2}
+                gt = {'nodes': nodes, 'edges': edges, 'heatmaps': heatmaps}
+                # adj_mat_label, masked_mat = matcher(pred, gt) 
+                # losses = loss_fn(model.h, heatmaps, scores1, scores2, adj_mat_label, masked_mat)
+                losses = loss_fn(pred, gt)
                 loss = losses['total']
 
             scaler.scale(loss).backward()
@@ -62,34 +61,31 @@ def train_epoch(model,
 def validate_epoch(
     model, 
     config,
-    data_loader, 
-    matcher,
+    data_loader,
     loss_fn, 
     device, 
     epoch, 
     val_interval,
     writer, 
     is_master):
-    model.eval()
-    matcher.eval()
+    model.train()
 
     total_loss = 0
     with tqdm(data_loader, unit="batch") as tepoch:
         max_iter_in_epoch = len(tepoch)
         for idx, batch in enumerate(tepoch):
             tepoch.set_description(f"Val: {epoch}")
-            images, heatmap, nodes, edges = batch
+            images, heatmaps, nodes, edges = batch
 
             images = images.to(device)
-            heatmap = heatmap.to(device)
+            heatmaps = heatmaps.to(device)
             nodes = [node.to(device) for node in nodes]
             edges = [edge.to(device) for edge in edges]
 
             scores1, scores2 = model(images)
-            pred = {'pred_nodes': (model.v[1]/320).to(device)}
-            gt = {'nodes': nodes, 'edges': edges}
-            adj_mat_label, masked_mat = matcher(pred, gt)
-            losses = loss_fn(model.h, heatmap, scores1, scores2, adj_mat_label, masked_mat)
+            pred = {'pred_nodes': (model.v[1]/320).to(device), 'pred_heatmaps': model.h, 'scores1': scores1, 'scores2': scores2}
+            gt = {'nodes': nodes, 'edges': edges, 'heatmaps': heatmaps}
+            losses = loss_fn(pred,gt)
 
             loss = losses['total']
             total_loss += loss.item()

@@ -11,7 +11,7 @@ B = 8
 N = 16 # N*N adj_mat을 만들 것임
 
 
-def generate_directed_adjacency_matrix(pairs_list, picked_nodes, k):
+def generate_directed_adjacency_matrix(mask_type, weight_mask, pairs_list, picked_nodes, k):
     """ 주어진 노드 쌍 리스트를 기반으로 방향성 인접 행렬을 생성합니다. """
     adjacency_matrix = np.zeros((k, k), dtype=int)
 
@@ -25,14 +25,18 @@ def generate_directed_adjacency_matrix(pairs_list, picked_nodes, k):
             adjacency_matrix[i, i] = 1
     # 로스 계산 시에 매칭 안된 노드를 학습하지 않도록 하는 마스크 행렬 B N N
     masked_matrix = np.ones((k, k), dtype=int)
-    for i in range(k):
-        if i not in picked_nodes:
-            for j in range(k):
-                masked_matrix[i,j] = 0
-    for j in range(k):
-        if j not in picked_nodes:
-            for i in range(k):
-                masked_matrix[i,j] = 0
+    if mask_type == 'K-N':
+        for i in range(k):
+            if i not in picked_nodes:
+                for j in range(k):
+                    masked_matrix[i,j] = 0
+        for j in range(k):
+            if j not in picked_nodes:
+                for i in range(k):
+                    masked_matrix[i,j] = 0
+    elif mask_type == 'diag':
+        for i in range(k):
+            masked_matrix[i,i] = weight_mask
 
     return adjacency_matrix, masked_matrix
 
@@ -47,7 +51,7 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         super().__init__()
 
     @torch.no_grad() # 역전파 안 한다는 뜻
-    def forward(self, outputs, targets, k=N):
+    def forward(self, config, outputs, targets, k=N):
         # outputs = {'pred_logits':..., 'pred_nodes':tensor(32, 128, 4)}
         # 32개의 배치, 128차원, 4개는 bbox_embed MLP 리턴값 느낌이 앞두개 한점, 뒤두개 다른점
         # r2u의 경우 8, 256, 2가 들어온다
@@ -94,6 +98,7 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         # print(indices[1])
         result = []
         masked = []
+        mask_type, weight_mask = config.MODEL.ADJ_MAT_MASK, config.MODEL.W_MASK
         sample_edges = []
         k = len(outputs['pred_nodes'][0]) # N 을 따라감
         for b in range(bs):
@@ -123,7 +128,7 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
             else:
                 sample_edge = [[mapping[i],mapping[j]] for i, j in edges]
             sample_edges.append(sample_edge)
-            adj_mat_label, masked_mat = generate_directed_adjacency_matrix(sample_edge, mapping, k)
+            adj_mat_label, masked_mat = generate_directed_adjacency_matrix(mask_type, weight_mask, sample_edge, mapping, k)
             result.append(torch.tensor(adj_mat_label, device=out_nodes.device))
             masked.append(torch.tensor(masked_mat, device=out_nodes.device))
         return torch.stack(result), torch.stack(masked)

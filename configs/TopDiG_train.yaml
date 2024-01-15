@@ -9,6 +9,14 @@ DATA:
   NUM_WORKERS: 16          # Number of data loading threads
   SEED: 10                # random seed for reproducibility
 
+MODEL:
+  # 매쳐 종류 ['Hungarian', 'Sinkhorn', 'Grid']
+  MATCHER: 'Hungarian'
+
+  # 마스크 종류 ['None', 'K-N', 'diag']
+  ADJ_MAT_MASK: 'diag'
+  W_MASK: 0.2 # diag일 때 사용함
+
 TRAIN:
   EPOCHS: &epoch 20
   LR: 1e-4 # L_graph
@@ -28,5 +36,5 @@ TRAIN:
 
 
 log:
-  exp_name: 'baseline_TopDiG_train_epoch20_weighted_ce'
+  exp_name: 'baseline_TopDiG_train_epoch20_diag_weight'
   message: "Baseline TopDig for Inria dataset"

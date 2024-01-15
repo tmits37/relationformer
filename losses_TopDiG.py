@@ -12,7 +12,7 @@ class SetCriterion(nn.Module):
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
 
-    def __init__(self, config, net, distributed):
+    def __init__(self, config, matcher, net, distributed):
         """ Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -22,8 +22,11 @@ class SetCriterion(nn.Module):
             losses: list of all the losses to be applied. See get_loss for list of available losses.
         """
         super().__init__()
+        self.config = config
+        self.matcher = matcher
         self.net = net
         self.distributed = distributed
+        self.adj_mat_mask = config.MODEL.ADJ_MAT_MASK
         self.losses = config.TRAIN.LOSSES
         self.weight_dict = { # 이 가중치도 조정가능
             'node':config.TRAIN.W_NODE,
@@ -43,16 +46,22 @@ class SetCriterion(nn.Module):
         """ sigmoid로 scores 한칸 한칸 값의 범위를 (0~1) 스케일로 바꿔주겠다
         TopDiG처럼 BCE 사용하겠습니다
         """
-        masked_loss_ce = nn.BCEWithLogitsLoss(weight=masked_mat)
+        if self.adj_mat_mask != 'None':
+            masked_loss_ce = nn.BCEWithLogitsLoss(weight=masked_mat)
+        else: # 마스크 없는 경우
+            masked_loss_ce = self.loss_ce
         target_transposed = target.transpose(1, 2) # 역방향 라벨
         loss1 = masked_loss_ce(scores1, target.float())
         loss2 = masked_loss_ce(scores2, target_transposed.float())
         return loss1, loss2
 
-    def forward(self, pred_htm, tgt_htm, scores1, scores2, target, masked_mat):
+    def forward(self, pred_dict, tgt_dict): # pred_htm, tgt_htm, scores1, scores2, target, masked_mat
+        scores1, scores2 = pred_dict['scores1'], pred_dict['scores2']
+        pred_htm, tgt_htm = pred_dict['pred_heatmaps'], tgt_dict['heatmaps']
+        adj_mat_label, masked_mat = self.matcher(self.config, pred_dict, tgt_dict)
         losses = {}
         losses['node'] = self.loss_node(pred_htm, tgt_htm)
-        losses['graph1'], losses['graph2'] = self.loss_graph(scores1, scores2, target, masked_mat)
+        losses['graph1'], losses['graph2'] = self.loss_graph(scores1, scores2, adj_mat_label, masked_mat)
         
         losses['total'] = losses['node']*self.weight_dict['node'] + losses['graph1']*self.weight_dict['graph'] + losses['graph2']*self.weight_dict['graph']
         # losses['total'] = sum([losses[key]*self.weight_dict[key] for key in self.losses]) # 왜 곱을 합하지?
