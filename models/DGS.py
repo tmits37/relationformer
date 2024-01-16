@@ -4,6 +4,7 @@ Modules to compute the matching cost and solve the corresponding LSAP.
 """
 import torch
 from scipy.optimize import linear_sum_assignment
+from matcher_sinkhorn import Sinkhorn
 from torch import nn
 import numpy as np
 
@@ -51,7 +52,7 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         super().__init__()
 
     @torch.no_grad() # 역전파 안 한다는 뜻
-    def forward(self, config, outputs, targets, k=N):
+    def forward(self, outputs, targets, config=None):
         # outputs = {'pred_logits':..., 'pred_nodes':tensor(32, 128, 4)}
         # 32개의 배치, 128차원, 4개는 bbox_embed MLP 리턴값 느낌이 앞두개 한점, 뒤두개 다른점
         # r2u의 경우 8, 256, 2가 들어온다
@@ -89,22 +90,45 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         C = C.view(bs, num_queries, -1).cpu() # 16,256,1049
 
         sizes = [len(v) for v in targets['nodes']]
-        indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))] # [(idx of pred_nodes),(idx of gt_nodes)]
-        # 배치별로 나눠서 (32,128,24),(32,128,9)...
-        # indices에 헝가리안 결과값 존재. 32개의 2차원 xy 리스트
-        # 텐서로 담아서 리턴
+        indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))] # [(idx of pred_nodes),(idx of gt_nodes)], B, 2, N
+        # print(indices[0][0], type(indices[0][0]))
+        # print(type(indices[0]))
+        # print(type(indices))
+        # 싱크혼 매쳐 TODO
+        indices = []
+        pred_marginal = torch.ones(bs, num_queries).cuda()
+        for i, c in enumerate(C.split(sizes, -1)):
+            gt_marginal = torch.ones(bs, sizes[i]).cuda()
+            cost_mat_transposed = c.transpose(1,2)
+            result = Sinkhorn.apply(cost_mat_transposed, gt_marginal, pred_marginal, 100, 1e-2)
+            dims = result.size()
+            for b in range(dims[0]):
+                for row in range(dims[1]): # row=gt_idx
+                    idx = -1
+                    proba = -1
+                    for col in range(dims[2]): # col=pred_idx
+                        if result[b][row][col] > proba:
+                            idx = col
+                            proba = result[b][row][col]
+                    print(row, idx)
+        indices = [Sinkhorn(c[i]) for i, c in enumerate(C.split(sizes, -1))]
+
         # 이거는 인퍼런스용으로 매칭 되는 것만 알면 됨
         # return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
         # print(indices[1])
+
         result = []
         masked = []
-        mask_type, weight_mask = config.MODEL.ADJ_MAT_MASK, config.MODEL.W_MASK
+        if config is not None:
+            mask_type, weight_mask = config.MODEL.ADJ_MAT_MASK, config.MODEL.W_MASK
+        else:
+            mask_type, weight_mask = 'None', 1
         sample_edges = []
-        k = len(outputs['pred_nodes'][0]) # N 을 따라감
+        k = outputs['pred_nodes'].size(1) # number of pred_nodes, 현재는 nms의 결과 256개
         for b in range(bs):
             mapping = {j:i for i,j in zip(indices[b][0].tolist(),indices[b][1].tolist())} # gt_idx: pred_idx
             edges = targets['edges'][b].tolist()
-            n = len(edges) # 빌딩 수에 따라 히트맵 노드 수가 바뀐다
+            n = len(edges) # number of gt_nodes
             sample_edge = []
             if k<n: # 헝가리안 매쳐의 전제 조건에서 벗어나는 조건이긴 함 bs*q < n
                 edge_maps = {edge[0]: edge[1] for edge in edges} # 정답 엣지 start_idx: end_idx
@@ -288,7 +312,7 @@ if __name__ == "__main__":
             else:
                 tmp.append([i, i+1])
         target['edges'].append(torch.tensor(tmp))
-    out, mask = matcher(output, target)
+    out, mask = matcher(output, target) # one 행렬 마스크 나옴
     # print('target_edges:', target['edges'])
     # print(out)
     # print(out[0][0])
@@ -297,11 +321,11 @@ if __name__ == "__main__":
     # print(len(out[0][1]))
 
     # print(output['pred_nodes'][0][out[0][0][0]])
-    print('out')
-    for i in range(len(out)):
-        print(out[i])
+    # print('out')
+    # for i in range(len(out)):
+    #     print(out[i])
 
-    print()
-    for i in range(len(mask)):
-        print(mask[i])
+    # print()
+    # for i in range(len(mask)):
+    #     print(mask[i])
 

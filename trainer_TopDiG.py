@@ -35,8 +35,6 @@ def train_epoch(model,
                 scores1, scores2 = model(images)
                 pred = {'pred_nodes': (model.v[1]/320).to(device), 'pred_heatmaps': model.h, 'scores1': scores1, 'scores2': scores2}
                 gt = {'nodes': nodes, 'edges': edges, 'heatmaps': heatmaps}
-                # adj_mat_label, masked_mat = matcher(pred, gt) 
-                # losses = loss_fn(model.h, heatmaps, scores1, scores2, adj_mat_label, masked_mat)
                 losses = loss_fn(pred, gt)
                 loss = losses['total']
 

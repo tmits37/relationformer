@@ -185,7 +185,7 @@ def main(args):
 
     ### Setting the model
     net = build_backbone(config)
-    # matcher = build_matcher(config) # R2U Net은 매쳐 필요 없음
+
     if args.distributed:
         device = torch.device(f"cuda:{args.rank}")
 

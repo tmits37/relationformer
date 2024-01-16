@@ -3,8 +3,6 @@
 Modules to compute the matching cost and solve the corresponding LSAP.
 """
 import torch
-from scipy.optimize import linear_sum_assignment
-from torch import nn
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -55,19 +53,27 @@ class Sinkhorn(torch.autograd.Function):
 
 
 if __name__ == '__main__':
-    c = torch.rand((2, 5, 5)).cuda()
+    c = torch.rand((2, 7, 4)).cuda()
     # tmp = [[[1,7,3],[5,10,4],[7,4,1]]]
     # c = torch.tensor(tmp).cuda()
-    a = torch.ones(2, 5).cuda()
-    b = torch.ones(2, 5).cuda()
+    a = torch.ones(2, 7).cuda()
+    b = torch.ones(2, 4).cuda()
     # a = torch.ones(1, 3).cuda()
     # b = torch.ones(1, 3).cuda()
-    p = Sinkhorn.apply(c, a, b, 100, 100)
+    p = Sinkhorn.apply(c, a, b, 100, 1e-2)
     print(c)
     print(p.size())
     dims = p.size()
     print(p)
     for b in range(dims[0]):
         for row in range(dims[1]):
-            print(sum(p[b][row]))
+            idx = -1
+            proba = -1
+            for col in range(dims[2]):
+                if p[b][row][col] > proba:
+                    idx = col
+                    proba = p[b][row][col]
+            print(row, idx)
+
+    
     
