@@ -4,7 +4,8 @@ Modules to compute the matching cost and solve the corresponding LSAP.
 """
 import torch
 from scipy.optimize import linear_sum_assignment
-from matcher_sinkhorn import Sinkhorn
+from models.matcher_sinkhorn import Sinkhorn
+# from matcher_sinkhorn import Sinkhorn
 from torch import nn
 import numpy as np
 
@@ -78,7 +79,6 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         # v는 32개의 배치인데 하나마다 타겟 노드들 들고 있음
         # 즉 타겟 노드들은 1이라는 클래스를 주는 텐서를 만드는 과정. 값은 1만 갖고 있음 
         # cost_class = -outputs["pred_logits"].flatten(0, 1).softmax(-1)[..., tgt_ids]
-        # print(cost_class[0][0])
         # 4096,2(배경이냐, 노드냐) -> 4096, 1(노드로짓) -> 4096, 722(정답 노드 수 만큼 복사하여 늘리기)
         # 코스트가 1에 가까운지 비교하기 위해 로짓값을 소프트맥스해주고 타겟 551개의 위치에 대한 코스트 클래스 완성
 
@@ -90,28 +90,42 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         C = C.view(bs, num_queries, -1).cpu() # 16,256,1049
 
         sizes = [len(v) for v in targets['nodes']]
-        indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))] # [(idx of pred_nodes),(idx of gt_nodes)], B, 2, N
-        # print(indices[0][0], type(indices[0][0]))
-        # print(type(indices[0]))
-        # print(type(indices))
-        # 싱크혼 매쳐 TODO
-        indices = []
-        pred_marginal = torch.ones(bs, num_queries).cuda()
-        for i, c in enumerate(C.split(sizes, -1)):
-            gt_marginal = torch.ones(bs, sizes[i]).cuda()
-            cost_mat_transposed = c.transpose(1,2)
-            result = Sinkhorn.apply(cost_mat_transposed, gt_marginal, pred_marginal, 100, 1e-2)
-            dims = result.size()
-            for b in range(dims[0]):
+        if config is not None:
+            matcher = config.MODEL.MATCHER
+        else:
+            matcher = 'Hungarian' # default
+        
+        if matcher == 'Hungarian':
+            indices = [linear_sum_assignment(c[i]) for i, c in enumerate(C.split(sizes, -1))]
+            # [(idx of pred_nodes),(idx of gt_nodes)], B, 2, N
+        elif matcher == 'Sinkhorn':
+            device = out_nodes.device
+            indices = []
+            pred_marginal = torch.ones(1, num_queries).to(device) # (1, pred_N)
+            for i, c in enumerate(C.split(sizes, -1)): # B만큼 반복
+                cost_mat = c[i].unsqueeze(0) # (pred_N, gt_N)
+                gt_marginal = torch.ones(1, sizes[i]).to(device) # (1, gt_N)
+                cost_mat_transposed = cost_mat.transpose(1,2).to(device)
+                result = Sinkhorn.apply(cost_mat_transposed, gt_marginal, pred_marginal, 100, 1e-2)
+                # print(result)
+                dims = result.size() # (1, gt_N, pred_N)
+                pred_idx=np.array([], dtype=int)
+                gt_idx=np.array([], dtype=int)
                 for row in range(dims[1]): # row=gt_idx
-                    idx = -1
                     proba = -1
                     for col in range(dims[2]): # col=pred_idx
-                        if result[b][row][col] > proba:
-                            idx = col
-                            proba = result[b][row][col]
-                    print(row, idx)
-        indices = [Sinkhorn(c[i]) for i, c in enumerate(C.split(sizes, -1))]
+                        # TODO 중복 확률에 대한 핸들링 필요해보임
+                        # 지금은 최댓값 찾고 중복값 다 넣어버림 1대N
+                        if result[0][row][col] > proba:
+                            proba = result[0][row][col]
+                    for col in range(dims[2]):
+                        if result[0][row][col] == proba:
+                            # print(row, col)
+                            pred_idx=np.append(pred_idx,col)
+                            gt_idx=np.append(gt_idx,row)
+                # print()
+                indices.append((pred_idx, gt_idx))
+
 
         # 이거는 인퍼런스용으로 매칭 되는 것만 알면 됨
         # return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
@@ -152,6 +166,7 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
             else:
                 sample_edge = [[mapping[i],mapping[j]] for i, j in edges]
             sample_edges.append(sample_edge)
+            # 정답 행렬 만드는 코드. 독립 노드는 대각선에 1이 찍힘
             adj_mat_label, masked_mat = generate_directed_adjacency_matrix(mask_type, weight_mask, sample_edge, mapping, k)
             result.append(torch.tensor(adj_mat_label, device=out_nodes.device))
             masked.append(torch.tensor(masked_mat, device=out_nodes.device))
@@ -163,9 +178,8 @@ if __name__ == "__main__":
     matcher.eval()
     output = { # R2U넷의 결과를 nms 돌려서 나온 결과
         "pred_nodes": torch.randn(B, N, 2), # x_cord, y_cord
-        # "pred_logits": torch.randn(B, N, 2) # 배경_로짓, 노드_로짓
     }
-    target = {'nodes':[
+    target = {'nodes':[ # 더미 gt
         torch.tensor([[0.0859, 0.0781],
         [0.5625, 0.2266],
         [0.7109, 0.7109],
@@ -312,7 +326,9 @@ if __name__ == "__main__":
             else:
                 tmp.append([i, i+1])
         target['edges'].append(torch.tensor(tmp))
-    out, mask = matcher(output, target) # one 행렬 마스크 나옴
+    out, mask = matcher(output, target) # 마스크는 one 행렬 나옴
+    for b in range(len(out)):
+        print(out[b].shape)
     # print('target_edges:', target['edges'])
     # print(out)
     # print(out[0][0])

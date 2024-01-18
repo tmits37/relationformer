@@ -53,14 +53,15 @@ class Sinkhorn(torch.autograd.Function):
 
 
 if __name__ == '__main__':
-    c = torch.rand((2, 7, 4)).cuda()
+    c = torch.rand((1, 5, 4)).cuda()
     # tmp = [[[1,7,3],[5,10,4],[7,4,1]]]
     # c = torch.tensor(tmp).cuda()
-    a = torch.ones(2, 7).cuda()
-    b = torch.ones(2, 4).cuda()
+    a = torch.ones(1, 5).cuda()
+    b = torch.ones(1, 4).cuda()
     # a = torch.ones(1, 3).cuda()
     # b = torch.ones(1, 3).cuda()
-    p = Sinkhorn.apply(c, a, b, 100, 1e-2)
+    # p = Sinkhorn.apply(c, a, b, 100, 1e-2)
+    p = Sinkhorn.apply(c, a, b, 100, 0.1)
     print(c)
     print(p.size())
     dims = p.size()
@@ -74,6 +75,21 @@ if __name__ == '__main__':
                     idx = col
                     proba = p[b][row][col]
             print(row, idx)
+    print()
+    for b in range(dims[0]):
+        for col in range(dims[2]):
+            _sum = 0
+            for row in range(dims[1]):
+                _sum += p[b][row][col]
+            print(_sum)
+    print()
+    for b in range(dims[0]):
+        for row in range(dims[1]):
+            _sum = 0
+            for col in range(dims[2]):
+                _sum += p[b][row][col]
+            print(_sum)
+
 
     
     
