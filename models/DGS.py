@@ -60,6 +60,7 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
         bs, num_queries = outputs['pred_nodes'].shape[:2] # 8, 256
 
         # We flatten to compute the cost matrices in a batch
+        # 텐서 크기가 서로 다르지만 이렇게 하면 배치 연산 가능
         # [batch_size * num_queries, 2] # 4096, 2
         out_nodes = outputs['pred_nodes'][...].flatten(0, 1) # 우리는 2048, 2
 
@@ -111,20 +112,22 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
                 dims = result.size() # (1, gt_N, pred_N)
                 pred_idx=np.array([], dtype=int)
                 gt_idx=np.array([], dtype=int)
-                for row in range(dims[1]): # row=gt_idx
-                    proba = -1
-                    for col in range(dims[2]): # col=pred_idx
-                        # TODO 중복 확률에 대한 핸들링 필요해보임
-                        # 지금은 최댓값 찾고 중복값 다 넣어버림 1대N
-                        if result[0][row][col] > proba:
-                            proba = result[0][row][col]
-                    for col in range(dims[2]):
-                        if result[0][row][col] == proba:
-                            # print(row, col)
-                            pred_idx=np.append(pred_idx,col)
-                            gt_idx=np.append(gt_idx,row)
-                # print()
-                indices.append((pred_idx, gt_idx))
+
+                result_np = result.detach().cpu().numpy().squeeze(0)  # result is now of shape [12, 256]
+
+                pred_idx = np.empty(0, dtype=int)
+                gt_idx = np.empty(0, dtype=int)
+
+                for row in range(dims[1]):
+                    max_proba_cols = np.where(result_np[row] == np.max(result_np[row]))[0]
+                    pred_idx = np.append(pred_idx, max_proba_cols)
+                    gt_idx = np.append(gt_idx, np.full(len(max_proba_cols), row, dtype=int))
+
+                    sorted_indices = np.argsort(pred_idx)
+                    sorted_pred_idx = pred_idx[sorted_indices]
+                    sorted_gt_idx = gt_idx[sorted_indices]
+
+                indices.append((sorted_pred_idx, sorted_gt_idx))
 
 
         # 이거는 인퍼런스용으로 매칭 되는 것만 알면 됨

@@ -15,5 +15,4 @@ cd ../../
 
 python3 -m torch.distributed.launch \
     --nproc_per_node=$GPUS \
-    train.py \
-    --config $CONFIG \
+    train_TopDiG.py --config $CONFIG ${@:3}

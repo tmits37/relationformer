@@ -29,7 +29,7 @@ def train_epoch(model,
 
             optimizer.zero_grad() # 배치별 그래디언트 초기화
             out = model(images)
-            losses = loss_fn(out, heatmap)
+            losses = loss_fn(out[1], heatmap)
             loss = losses
 
             loss.backward()
@@ -57,7 +57,7 @@ def validate_epoch(
     writer, 
     is_master):
 
-    model.eval()
+    model.train()
 
     total_loss = 0
     with tqdm(data_loader, unit="batch") as tepoch:
@@ -68,9 +68,9 @@ def validate_epoch(
 
             images = images.to(device)
             heatmap = heatmap.to(device)
-
-            out = model(images)
-            losses = loss_fn(out, heatmap)
+            with torch.no_grad():
+                out = model(images)
+            losses = loss_fn(out[1], heatmap)
             loss = losses
             total_loss += loss.item()
 

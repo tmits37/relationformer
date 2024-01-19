@@ -62,9 +62,9 @@ if __name__ == "__main__":
     for i in range(1, 2):
         # dir_name = dir_name_ + str(i*2)
         dir_name = dir_name_ + str(20)
-        config_file = "/nas/tsgil/relationformer/configs/TopDiG_train.yaml"
-        ckpt_path = f"/nas/tsgil/TopDiG_train/runs/baseline_TopDiG_train_epoch20_weighted_ce_10/models/{dir_name}.pth"
-        show_dir = f'/nas/tsgil/gil/infer_TopDiG/exp3/{dir_name}'
+        config_file = "/nas/tsgil/relationformer/work_dirs/TopDiG_train/runs/baseline_TopDiG_train_epoch20_scores_split_10/config.yaml"
+        ckpt_path = f"/nas/tsgil/relationformer/work_dirs/TopDiG_train/runs/baseline_TopDiG_train_epoch20_scores_split_10/models/{dir_name}.pth"
+        show_dir = f'/nas/tsgil/gil/infer_TopDiG/exp_none/{dir_name}'
 
         with open(config_file) as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -113,10 +113,10 @@ if __name__ == "__main__":
             images = images.cuda()
 
             with torch.no_grad():
-                scores1, scores2 = model(images)
-                out_nodes = model.v[1].detach().cpu().numpy()
-                out_heatmaps = model.h
-            scores = scores1.sigmoid() + scores2.transpose(1,2).sigmoid()
+                out = model(images)
+                out_nodes = (out['pred_nodes']*320).detach().cpu().numpy()
+                out_heatmaps = out['pred_heatmaps']
+            scores = out['scores1'].sigmoid() + out['scores2'].transpose(1,2).sigmoid()
             permu = scores_to_permutations(scores)
 
             start_idx = idx*config.DATA.BATCH_SIZE
@@ -152,11 +152,11 @@ if __name__ == "__main__":
                 # TODO 엣지 추가하기 수정중
                 mat = permu[i].numpy()
                 pred_edges = []
-                for i in range(len(mat)):
-                    for j in range(len(mat)):
-                        if mat[i][j] == 1:
-                            if i != j:
-                                pred_edges.append((i,j))
+                for j in range(len(mat)):
+                    for k in range(len(mat)):
+                        if mat[j][k] == 1:
+                            if j != k:
+                                pred_edges.append((j,k))
                 for x, _ in pred_edges:
                     plt.scatter(out_nodes[i][x][1], out_nodes[i][x][0], color='b')
                 for e in pred_edges:

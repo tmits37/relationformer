@@ -32,8 +32,7 @@ def train_epoch(model,
             # [0]: 256개 중에 gt 노드 개수만큼 뽑기, [1]: pred와 매칭되게 순서맞게 arrange
 
             with torch.cuda.amp.autocast():
-                scores1, scores2 = model(images)
-                pred = {'pred_nodes': (model.v[1]/320).to(device), 'pred_heatmaps': model.h, 'scores1': scores1, 'scores2': scores2}
+                pred = model(images)
                 gt = {'nodes': nodes, 'edges': edges, 'heatmaps': heatmaps}
                 losses = loss_fn(pred, gt)
                 loss = losses['total']
@@ -80,8 +79,7 @@ def validate_epoch(
             nodes = [node.to(device) for node in nodes]
             edges = [edge.to(device) for edge in edges]
 
-            scores1, scores2 = model(images)
-            pred = {'pred_nodes': (model.v[1]/320).to(device), 'pred_heatmaps': model.h, 'scores1': scores1, 'scores2': scores2}
+            pred = model(images)
             gt = {'nodes': nodes, 'edges': edges, 'heatmaps': heatmaps}
             losses = loss_fn(pred,gt)
 

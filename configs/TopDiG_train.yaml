@@ -14,7 +14,7 @@ MODEL:
   MATCHER: 'Sinkhorn'
 
   # 마스크 종류 ['None', 'K-N', 'diag']
-  ADJ_MAT_MASK: 'None'
+  ADJ_MAT_MASK: 'K-N'
   W_MASK: 0.2 # diag일 때 사용함
 
 TRAIN:
@@ -36,5 +36,5 @@ TRAIN:
 
 
 log:
-  exp_name: 'baseline_TopDiG_train_epoch20_sinkhorn'
+  exp_name: 'baseline_TopDiG_train_epoch20_tmp'
   message: "Baseline TopDig for Inria dataset"

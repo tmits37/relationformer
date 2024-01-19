@@ -13,8 +13,6 @@ class TopDiG(nn.Module):
         self.backbone = backbone
         self.decoder = decoder
         self.device = device
-        self.v = None # 노드 좌표 x, y
-        self.h = None # 히트 맵
 
     def descriptor_extraction(self, feature_map, vertices_positions):
         B = len(feature_map)
@@ -39,13 +37,17 @@ class TopDiG(nn.Module):
     def forward(self, samples):
         # R2U-Net -> DiG generator
         feature_map, vertices_detection_mask, vertices_positions = self.backbone(samples)
-        self.h = vertices_detection_mask
-        self.v = vertices_positions
         visual_descriptor = self.descriptor_extraction(feature_map, vertices_positions[1]) # B, D, 256
         scores1, scores2 = self.decoder(vertices_positions[1], visual_descriptor)
-        # scores1, scores2 = self.decoder.predict(feature_map, vertices_positions[1]) # TODO 폴리월드 디코더
+        # scores1, scores2 = self.decoder.predict(feature_map, vertices_positions[1]) # 폴리월드 디코더
+        output = {
+            'pred_nodes': (vertices_positions[1]/320).to(self.device),
+            'pred_heatmaps': vertices_detection_mask,
+            'scores1': scores1,
+            'scores2': scores2
+            }
 
-        return scores1, scores2
+        return output
 
 
 def build_TopDiG(config, **kwargs): # 일단 ptm 쓰는게 default인 상태
@@ -53,7 +55,7 @@ def build_TopDiG(config, **kwargs): # 일단 ptm 쓰는게 default인 상태
     backbone = build_backbone(config.DATA.BACKBONE_CONFIG_PATH)
     backbone.load_state_dict(pretrained_backbone['model_state_dict'])
     decoder = DiG_generator()
-    # decoder = OptimalMatching() # TODO 월요일에 백본 로드해도 학습 안 될 경우 갈아끼우기
+    # decoder = OptimalMatching() # 폴리월드 디코더
     
     model = TopDiG(
         backbone,

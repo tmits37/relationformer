@@ -16,7 +16,7 @@ TRAIN:
   LR_DROP: *epoch
 
   SAVE_PATH: "./work_dirs/R2U_Net_pretrain/"          # save path for the checkpoint, log and val results
-  VAL_INTERVAL: 10                  # validation interval
+  VAL_INTERVAL: 50                  # validation interval
   SAVE_VAL: False                   # save validation data
 
 log:
