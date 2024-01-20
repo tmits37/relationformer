@@ -8,4 +8,4 @@ pip3 install tensorboard
 
 python3 -m torch.distributed.launch \
     --nproc_per_node=$GPUS \
-    train_TopDiG.py --config $CONFIG ${@:3}
+    pretrain.py --config $CONFIG ${@:3}

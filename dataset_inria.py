@@ -1,18 +1,11 @@
-import scipy
 import os
-import sys
 import numpy as np
 import random
-import pickle
-import json
 import scipy.ndimage
 import imageio
-import math
 import torch
-import pyvista
 from skimage.transform import resize
 from torch.utils.data import Dataset
-from scipy.sparse import csr_matrix
 import torchvision.transforms.functional as tvf
 
 train_transform = [] # 증강 넣을 수도 있음
