@@ -12,9 +12,10 @@ from torch.utils.data import Dataset
 from pycocotools.coco import COCO
 
 from dataset_preparing import get_coords_from_densifing_points, generate_heatmap
+
+
 # dense에 대한 간격이나 표준편차를 하이퍼 파라미터로 조정가능한 코드. 히트맵 생성 때문에 속도는 좀 걸릴 수 있음
 # Inria 데이터 크기 조정하여 coco 포맷으로 맞춰준 데이터 처리가능
-
 def min_max_normalize(image, percentile, nodata=-1.):
     image = image.astype('float32')
     mask = np.mean(image, axis=2) != nodata * image.shape[2]
@@ -113,7 +114,7 @@ class CrowdAI(Dataset):
     def __init__(self, 
                  images_directory, 
                  annotations_path,
-                 gap_datance=20,
+                 gap_distance=20,
                  sigma=1.5):
 
         self.IMAGES_DIRECTORY = images_directory
@@ -124,8 +125,12 @@ class CrowdAI(Dataset):
         self.len = len(self.image_ids)
 
         self.max_points = 256 # TODO: It should be restricted the number when gt points over the max points limit
-        self.gap_distance = gap_datance
+        self.gap_distance = gap_distance
         self.sigma = sigma
+
+        print("Built Dataset Options:")
+        print(f"--Num.of images: {self.image_ids}")
+        print(f"--Gap Distance: {self.gap_distance}", f"--Sigma: {self.sigma}")
 
     def prepare_annotations(self, img):
         """Prepares annotations for an image.
@@ -172,8 +177,8 @@ class CrowdAI(Dataset):
         image_path = os.path.join(self.IMAGES_DIRECTORY, img['file_name'])
         image = io.imread(image_path)
 
-        gdf = self.prepare_annotations(img)
-        coords, gdf = get_coords_from_densifing_points(gdf, gap_distance=self.gap_distance) # [N, 2]
+        origin_gdf = self.prepare_annotations(img)
+        coords, gdf = get_coords_from_densifing_points(origin_gdf, gap_distance=self.gap_distance) # [N, 2]
         heatmap = generate_heatmap(coords, image.shape[:2], sigma=self.sigma)
 
         nodes, edges = gdf_to_nodes_and_edges(gdf)
@@ -202,7 +207,7 @@ class CrowdAI(Dataset):
             'image_idx': image_idx, 
             'heatmap': heatmap,
             'nodes': nodes,
-            'edges': edges
+            'edges': edges,
             }
         return sample
 
@@ -218,6 +223,26 @@ class CrowdAI(Dataset):
             sample = self.loadSample(idx_new)
             number_of_nodes = len(sample['nodes'])
         return sample
+
+
+def build_inria_coco_data(config, mode='train'):
+    if mode == 'train':
+        ds = CrowdAI(
+            images_directory=config.DATA.COCO_IMAGE_DIR,
+            annotations_path=config.DATA.COCO_ANNOT_PATH,
+            gap_distance=config.DATA.GAP_DISTANCE,
+            sigma=config.DATA.SIGMA
+        )
+    elif mode == 'test':
+        ds = CrowdAI(
+            images_directory=config.DATA.TEST_COCO_IMAGE_DIR,
+            annotations_path=config.DATA.TEST_COCO_ANNOT_PATH,
+            gap_distance=config.DATA.GAP_DISTANCE,
+            sigma=config.DATA.SIGMA
+        )
+    else:
+        raise AssertionError
+    return ds
 
 
 if __name__ == '__main__':

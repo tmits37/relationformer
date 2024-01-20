@@ -80,6 +80,8 @@ def worldCoordPoly2CanvasPolygon(geom, geo_transform, xoff=0, yoff=0):
 
 
 def add_sample_points_to_edges(polygon, gap):
+    min_distance = int(gap // 4)
+
     # Initialize a list to hold the new points
     new_points = []
 
@@ -99,8 +101,12 @@ def add_sample_points_to_edges(polygon, gap):
         current_distance = gap
         while current_distance < line.length:
             point = line.interpolate(current_distance)
-            new_points.append((point.x, point.y))
             current_distance += gap
+
+            if (line.length - current_distance) < -min_distance:
+                pass
+            else:
+                new_points.append((point.x, point.y))
 
     # Ensure the polygon is closed by adding the start point at the end
     new_points.append(coords[0])
@@ -158,10 +164,11 @@ def raster_to_polygons(raster, window, min_patch_objs=3, tolerance=1.2):
     return gdf_ori
 
 
-def get_coords_from_densifing_points(gdf, gap_distance=10):
+def get_coords_from_densifing_points(gdf, gap_distance=10, nms=False):
     p_gdf = gdf.copy()
     origin_coordinates = []
     polys = []
+    coordinates = []
     for i, row in gdf.iterrows():
         geom = row.geometry
         new_geom = add_sample_points_to_edges(geom, gap_distance)
@@ -172,44 +179,55 @@ def get_coords_from_densifing_points(gdf, gap_distance=10):
         pos = np.stack([x,y], axis=1)
         pos = np.round(pos).astype('uint16')
         origin_coordinates.append(pos)
-        
-    origin_coordinates = np.concatenate(origin_coordinates, axis=0) # .tolist()
-    p_gdf['geometry'] = polys
 
-    coordinates = []
-    polygons = []
-    for i, row in p_gdf.iterrows():
-        geom = row.geometry
-        x, y = geom.exterior.xy
+        x, y = new_geom.exterior.xy
         x, y = np.array(x), np.array(y)
         pos = np.stack([x,y], axis=1)
         pos = np.round(pos).astype('uint16')
-
-        coords_score = []
-        for pt in pos:
-            if pt.tolist() in origin_coordinates:
-                coords_score.append(1)
-            else:
-                coords_score.append(100)
-        coords_score = np.array(coords_score)
-
-        nms_idx = non_max_suppression(pos, coords_score, int(gap_distance // 2))
-        nms_idx = sorted(nms_idx)
-        nms_coords = pos[nms_idx]
-        # nms_coords = pos
-        coordinates.append(nms_coords)
+        coordinates.append(pos)
         
-        nms_coords = np.concatenate([nms_coords, nms_coords[:1]], axis=0).tolist()
-        if len(nms_coords) > 3:
-            nms_poly = Polygon(nms_coords)
-            polygons.append(nms_poly)
-        else: # 폴리곤인 점, 선인 경우
-            # print('Exception! nms_coords:', nms_coords)
-            polygons.append(None)
-
     coordinates = np.concatenate(coordinates, axis=0)
-    p_gdf['geometry'] = polygons
-    n_gdf = p_gdf.dropna(how='any')
+    origin_coordinates = np.concatenate(origin_coordinates, axis=0) # .tolist()
+    p_gdf['geometry'] = polys
+
+    if nms:
+        coordinates = []
+        polygons = []
+        for i, row in p_gdf.iterrows():
+            geom = row.geometry
+            x, y = geom.exterior.xy
+            x, y = np.array(x), np.array(y)
+            pos = np.stack([x,y], axis=1)
+            pos = np.round(pos).astype('uint16')
+
+            coords_score = []
+            for pt in pos:
+                if pt.tolist() in origin_coordinates:
+                    coords_score.append(1)
+                else:
+                    coords_score.append(100)
+            coords_score = np.array(coords_score)
+
+            # int(gap_distance // 2)
+            nms_idx = non_max_suppression(pos, coords_score, 10)
+            nms_idx = sorted(nms_idx)
+            nms_coords = pos[nms_idx]
+            # nms_coords = pos
+            coordinates.append(nms_coords)
+            
+            nms_coords = np.concatenate([nms_coords, nms_coords[:1]], axis=0).tolist()
+            if len(nms_coords) > 3:
+                nms_poly = Polygon(nms_coords)
+                polygons.append(nms_poly)
+            else: # 폴리곤인 점, 선인 경우
+                # print('Exception! nms_coords:', nms_coords)
+                polygons.append(None)
+
+        coordinates = np.concatenate(coordinates, axis=0)
+        p_gdf['geometry'] = polygons
+        n_gdf = p_gdf.dropna(how='any')
+    else:
+        n_gdf = p_gdf.dropna(how='any')
     return coordinates, n_gdf
 
 

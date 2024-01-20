@@ -21,15 +21,13 @@ def train_epoch(model,
         max_iter_in_epoch = len(tepoch)
         for idx, batch in enumerate(tepoch):
             tepoch.set_description(f"Epoch {epoch}")
-            images, seg, heatmap = batch
-
+            images, heatmaps, _, _ = batch
             images = images.to(device)
-            seg = seg.to(device)
-            heatmap = heatmap.to(device)
+            heatmaps = heatmaps.to(device)
 
             optimizer.zero_grad() # 배치별 그래디언트 초기화
             out = model(images)
-            losses = loss_fn(out[1], heatmap)
+            losses = loss_fn(out[1], heatmaps)
             loss = losses
 
             loss.backward()
@@ -64,13 +62,12 @@ def validate_epoch(
         max_iter_in_epoch = len(tepoch)
         for idx, batch in enumerate(tepoch):
             tepoch.set_description(f"Val: {epoch}")
-            images, seg, heatmap = batch
-
+            images, heatmaps, _, _ = batch
             images = images.to(device)
-            heatmap = heatmap.to(device)
+            heatmaps = heatmaps.to(device)
             with torch.no_grad():
                 out = model(images)
-            losses = loss_fn(out[1], heatmap)
+            losses = loss_fn(out[1], heatmaps)
             loss = losses
             total_loss += loss.item()
 
