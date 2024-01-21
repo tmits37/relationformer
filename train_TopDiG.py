@@ -16,8 +16,9 @@ from torch.nn.parallel import DistributedDataParallel
 
 from losses_TopDiG import SetCriterion
 import torch.multiprocessing
-
+from dataloader_cocostyle import build_inria_coco_data
 from trainer_TopDiG import train_epoch, validate_epoch, save_checkpoint
+
 os.environ['TORCH_DISTRIBUTED_DEBUG']='DETAIL'
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
@@ -31,8 +32,6 @@ def parse_args():
     # parser.add_argument('--seg_net', default=None, help='checkpoint of the segmentation model')
     parser.add_argument('--device', default='cuda',
                             help='device to use for training')
-    parser.add_argument('--cuda_visible_device', nargs='*', type=int, default=[0,1],
-                            help='list of index where skip conn will be made')
     # When using PyTorch version >= 2.0.0, the `torch.distributed.launch`
     # will pass the `--local-rank` parameter to `tools/train.py` instead
     # of `--local_rank`.
@@ -138,22 +137,14 @@ def main(args):
 
     torch.backends.cudnn.benchmark = True
     torch.backends.cudnn.enabled = True
-    torch.multiprocessing.set_sharing_strategy('file_system')
-    # device = torch.device("cuda") if args.device=='cuda' else torch.device("cpu")
+    torch.multiprocessing.set_start_method('spawn')
+    torch.multiprocessing.set_sharing_strategy('file_descriptor')
 
-    # gpu 2개 사용할 경우, world_size = 2, rank = 0 and 1 으로 두번 실행되는것을 관찰할 수 있다.
     init_for_distributed(args)
-
     device = torch.device(args.device)
 
-    ### Setting the dataset
-    dataset = CrowdAI(
-        images_directory='/nas/tsgil/dataset/Inria_building/cocostyle/images',
-        annotations_path='/nas/tsgil/dataset/Inria_building/cocostyle/annotation.json'
-    )
-    # TODO 일단은 훈련셋과 val셋 동일하게
-    train_ds = dataset
-    # val_ds = dataset
+    train_ds = build_inria_coco_data(config, mode='train')
+    # val_ds = build_inria_coco_data(config, mode='test')
 
     if args.distributed:
         train_sampler = DistributedSampler(train_ds, shuffle=True)
@@ -185,7 +176,6 @@ def main(args):
     #     # Expected size 4 but got size ot size 3 for tensor number 1 in the list.
     #     )
 
-
     ### Setting the model
     net = build_TopDiG(config)
     matcher = HungarianMatcher()
@@ -204,7 +194,6 @@ def main(args):
 
     # Loss = L_node + L_graph
     loss = SetCriterion(config, matcher, net, distributed=args.distributed).cuda(args.local_rank)
-
 
     ### Setting optimizer
     param_dicts = [
@@ -269,23 +258,23 @@ def main(args):
             print(f"Epoch {epoch}, Training Loss: {train_loss}")
             print(f"Epoch {epoch}: Current learning rate = {current_lr}")
 
-        # if is_master and (epoch % config.TRAIN.VAL_INTERVAL == 0):
-        #     validate_epoch(
-        #         net,
-        #         config=config,
-        #         data_loader=val_loader,
-        #         loss_fn=loss, 
-        #         device=device, 
-        #         epoch=epoch, 
-        #         val_interval=config.TRAIN.VAL_INTERVAL,
-        #         writer=writer, 
-        #         is_master=is_master)
-        save_checkpoint(
-            net,
-            optimizer,
-            scheduler,
-            epoch, 
-            config)
+        if is_master and (epoch % config.TRAIN.VAL_INTERVAL == 0):
+            save_checkpoint(
+                net,
+                optimizer,
+                scheduler,
+                epoch, 
+                config)
+            # validate_epoch(
+            #     net,
+            #     config=config,
+            #     data_loader=val_loader,
+            #     loss_fn=loss, 
+            #     device=device, 
+            #     epoch=epoch, 
+            #     val_interval=config.TRAIN.VAL_INTERVAL,
+            #     writer=writer, 
+            #     is_master=is_master)
 
     if is_master and writer:
         writer.close()
@@ -293,5 +282,4 @@ def main(args):
 
 if __name__ == '__main__':
     args = parse_args()
-    torch.multiprocessing.set_sharing_strategy('file_system')
     main(args)
