@@ -203,13 +203,13 @@ def get_coords_from_densifing_points(gdf, gap_distance=10, nms=False):
             coords_score = []
             for pt in pos:
                 if pt.tolist() in origin_coordinates:
-                    coords_score.append(1)
+                    coords_score.append(2)
                 else:
-                    coords_score.append(100)
+                    coords_score.append(1)
             coords_score = np.array(coords_score)
 
             # int(gap_distance // 2)
-            nms_idx = non_max_suppression(pos, coords_score, 10)
+            nms_idx = non_max_suppression(pos, coords_score, int(gap_distance // 2))
             nms_idx = sorted(nms_idx)
             nms_coords = pos[nms_idx]
             # nms_coords = pos
