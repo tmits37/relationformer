@@ -1,0 +1,28 @@
+DATA:
+  BATCH_SIZE: 8
+  DATASET: 'Inria'     # Dataset name
+  COCO_IMAGE_DIR: '/nas/k8s/dev/research/doyoungi/dataset/Inria_building/cocostyle_framefield/images'
+  COCO_ANNOT_PATH: '/nas/k8s/dev/research/doyoungi/dataset/Inria_building/cocostyle_framefield/annotation.json'
+  TEST_COCO_IMAGE_DIR: '/nas/k8s/dev/research/doyoungi/dataset/Inria_building/cocostyle_framefield_test/images'
+  TEST_COCO_ANNOT_PATH: '/nas/k8s/dev/research/doyoungi/dataset/Inria_building/cocostyle_framefield_test/annotation.json'
+  GAP_DISTANCE: 10
+  SIGMA: 1.0
+  NMS: False
+
+  IMG_SIZE: [300, 300]    # Input image size resized [320, 320]
+  NUM_WORKERS: 16          # Number of data loading threads
+  SEED: 10                # random seed for reproducibility
+
+TRAIN:
+  EPOCHS: &epoch 200
+  LR: 5e-6 # L_graph
+  WEIGHT_DECAY: 5e-7
+  LR_DROP: *epoch
+
+  SAVE_PATH: "./work_dirs/R2U_Net_pretrain/"  # save path for the checkpoint, log and val results
+  VAL_INTERVAL: 10
+  SAVE_VAL: False
+
+log:
+  exp_name: 'baseline_R2U_Net_pretrain_epoch200_5e-6_10_1.0_batch8'
+  message: "Baseline TopDig for Inria dataset"
