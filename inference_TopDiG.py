@@ -12,6 +12,12 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 from scipy.optimize import linear_sum_assignment
+import networkx as nx
+import geopandas as gpd
+from shapely.geometry import Polygon
+import rasterio
+from rasterio.transform import from_origin
+from sklearn.metrics import f1_score, accuracy_score, jaccard_score
 
 
 class obj:
@@ -57,14 +63,75 @@ def scores_to_permutations(scores): # 인퍼런스용 함수
         perm[b,r,c] = 1 # 헝가리안 알고리즘이 찾은 칸은 1로 아니면 0인 permutation matrix (B N N) 만든다
     return torch.tensor(perm) # 텐서로 바꿔주기
 
+def cycles_to_geodf(G, cycles):
+    polygons = []
+    for cycle in cycles:
+        if len(cycle) > 2:  # Polygon needs at least 3 points
+            points = [G.nodes[node]['pos'] for node in cycle]  # Assuming 'pos' contains coordinates
+            polygons.append(Polygon(points))
+    
+    return gpd.GeoDataFrame(geometry=polygons)
+
+def compute_pixel(pred_nodes, pred_edges, gt_nodes, gt_edges):
+    pred_graph = nx.DiGraph()
+    for i in range(len(pred_nodes)):
+        pred_graph.add_node(i)
+    pred_graph.add_edges_from(pred_edges)
+    pos_pred = {i: (node[1], 320-node[0]) for i, node in enumerate(pred_nodes)}
+    for node, position in pos_pred.items():
+        pred_graph.nodes[node]['pos'] = position
+    
+    gt_graph = nx.DiGraph()
+    for i in range(len(gt_nodes)):
+        gt_graph.add_node(i)
+    gt_graph.add_edges_from(gt_edges)
+    pos_gt = {i: (node[1], 320-node[0]) for i, node in enumerate(gt_nodes)}
+    for node, position in pos_gt.items():
+        gt_graph.nodes[node]['pos'] = position
+
+    # Convert cycles to a GeoDataFrame
+    cycles_pred = list(nx.simple_cycles(pred_graph))
+    cycles_gt = list(nx.simple_cycles(gt_graph))
+    geo_df_pred = cycles_to_geodf(pred_graph, cycles_pred)
+    geo_df_gt = cycles_to_geodf(gt_graph, cycles_gt)
+
+    pixel_size = 1
+    x_min, y_min, x_max, y_max = 0, 0, 320, 320
+    width = int((x_max - x_min) / pixel_size)
+    height = int((y_max - y_min) / pixel_size)
+
+    # Create a transform (assumes north-up and no rotation)
+    transform = from_origin(x_min, y_max, pixel_size, pixel_size)
+
+    # Convert the GeoDataFrame to a raster array
+    shapes = ((geom, 1) for geom in geo_df_pred.geometry)
+    rasterized_pred = rasterio.features.rasterize(shapes=shapes, out_shape=(height, width), transform=transform)
+
+    shapes = ((geom, 1) for geom in geo_df_gt.geometry)
+    rasterized_gt = rasterio.features.rasterize(shapes=shapes, out_shape=(height, width), transform=transform)
+
+    rasterized_pred, rasterized_gt = rasterized_pred.flatten(), rasterized_gt.flatten()
+
+    accuracy = accuracy_score(rasterized_pred, rasterized_gt)
+    f1 = f1_score(rasterized_pred, rasterized_gt, average='macro')  # 'macro' for unweighted mean across classes
+    miou = jaccard_score(rasterized_pred, rasterized_gt, average='macro')
+    building_iou = jaccard_score(rasterized_pred, rasterized_gt)
+
+    return accuracy, f1, miou, building_iou
+
+
 if __name__ == "__main__":
     dir_name_ = 'epochs_'
     for i in range(1, 2):
-        # dir_name = dir_name_ + str(i*2)
+        # TODO 경로 변수 명령어 인자로 받게 수정하기
         dir_name = dir_name_ + str(20)
-        config_file = "/nas/tsgil/relationformer/work_dirs/TopDiG_train/runs/baseline_TopDiG_train_epoch20_scores_split_10/config.yaml"
-        ckpt_path = f"/nas/tsgil/relationformer/work_dirs/TopDiG_train/runs/baseline_TopDiG_train_epoch20_scores_split_10/models/{dir_name}.pth"
-        show_dir = f'/nas/tsgil/gil/infer_TopDiG/exp_none/{dir_name}'
+        config_file = "/nas/tsgil/TopDiG_train/runs/baseline_TopDiG_train_epoch20_sinkhorn_K-N_10/config.yaml"
+        ckpt_path = f"/nas/tsgil/TopDiG_train/runs/baseline_TopDiG_train_epoch20_sinkhorn_K-N_10/models/{dir_name}.pth"
+        show_dir = f'/nas/tsgil/gil/infer_TopDiG/exp_sinkhorn_K_N/{dir_name}'
+        metric_file = '/nas/tsgil/gil/infer_TopDiG/exp_sinkhorn_K_N/metrics_log.txt'
+
+        with open(metric_file, "a") as file:
+            file.write(f'CONFIG: {config_file}\n\n')
 
         with open(config_file) as f:
             config = yaml.load(f, Loader=yaml.FullLoader)
@@ -72,8 +139,8 @@ if __name__ == "__main__":
         config = dict2obj(config)
 
         dataset = CrowdAI(
-            images_directory='/nas/tsgil/dataset/Inria_building/cocostyle/images',
-            annotations_path='/nas/tsgil/dataset/Inria_building/cocostyle/annotation.json'
+            images_directory='/nas/tsgil/dataset/Inria_building/cocostyle_inria_test/images',
+            annotations_path='/nas/tsgil/dataset/Inria_building/cocostyle_inria_test/annotation.json'
         )
         val_sampler = torch.utils.data.SequentialSampler(dataset)
 
@@ -105,11 +172,12 @@ if __name__ == "__main__":
         if not os.path.isdir(show_dir):
             os.makedirs(show_dir)
 
+        pixel_results = {'acc': [], 'f1': [], 'miou':[], 'building_iou':[]}
         iteration = 0
         for idx, (images, heatmaps, nodes, edges) in enumerate(tqdm(val_loader, total=len(val_loader))):
             iteration = iteration+1
-            if iteration == 4:
-                break
+            # if iteration == 2:
+            #     break
             images = images.cuda()
 
             with torch.no_grad():
@@ -149,7 +217,6 @@ if __name__ == "__main__":
                 # 네 번째 서브플롯 - pred_image
                 axes[1, 1].imshow(min_max_normalize(image, 0.5))
                 axes[1, 1].scatter(out_nodes[i][:, 1], out_nodes[i][:, 0], color='g')
-                # TODO 엣지 추가하기 수정중
                 mat = permu[i].numpy()
                 pred_edges = []
                 for j in range(len(mat)):
@@ -166,9 +233,28 @@ if __name__ == "__main__":
                                 arrowprops=dict(arrowstyle="->", lw=1.5, color='r'))
                 axes[1, 1].set_title('pred_image')
 
+                # 매트릭 계산
+                acc, f1, miou, b_iou = compute_pixel(out_nodes[i], pred_edges, nodes_i, edges_i)
+                pixel_results['acc'].append(acc)
+                pixel_results['f1'].append(f1)
+                pixel_results['miou'].append(miou)
+                pixel_results['building_iou'].append(b_iou)
+                # print(f'{start_idx+i}.png acc: {acc:.5f}, f1: {f1:.5f}, miou: {miou:.5f}, b_iou: {b_iou:.5f}')
+                plt.suptitle(f'Accuracy: {acc:.3f}, F1 Score: {f1:.3f}, mIoU: {miou:.3f}, building_iou: {b_iou:.3f}')
+                with open(metric_file, "a") as file:
+                    file.write(f'{start_idx+i}.png acc: {acc}, f1: {f1}, miou: {miou}, b_iou: {b_iou}\n')
+
                 # 서브플롯 간 간격 조절 (선택 사항)
                 plt.tight_layout()
-                
+
                 save_path = f'{show_dir}/{start_idx+i}.png'
                 plt.savefig(save_path)
                 plt.close()
+        with open(metric_file, "a") as file:
+            file.write(f"\nTotal average metrics\n")
+            for key, result in pixel_results.items():
+                pixel_array=np.array(result)
+                print(f'{key}: {pixel_array.mean(0)}')
+                file.write(f'{key}: {pixel_array.mean(0)}\n')
+            file.write("------------\n")
+
