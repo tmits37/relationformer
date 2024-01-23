@@ -134,7 +134,6 @@ class HungarianMatcher(nn.Module):
 
                 indices.append((sorted_pred_idx, sorted_gt_idx))
 
-        # Building Adjacency Matrix
         result = []
         masked = []
         if config is not None:
