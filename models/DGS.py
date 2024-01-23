@@ -129,11 +129,6 @@ class HungarianMatcher(nn.Module): # relationformer의 matcher.py에서 가져�
 
                 indices.append((sorted_pred_idx, sorted_gt_idx))
 
-
-        # 이거는 인퍼런스용으로 매칭 되는 것만 알면 됨
-        # return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
-        # print(indices[1])
-
         result = []
         masked = []
         if config is not None:

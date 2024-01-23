@@ -79,7 +79,8 @@ def validate_epoch(
             nodes = [node.to(device) for node in nodes]
             edges = [edge.to(device) for edge in edges]
 
-            pred = model(images)
+            with torch.no_grad():
+                pred = model(images)
             gt = {'nodes': nodes, 'edges': edges, 'heatmaps': heatmaps}
             losses = loss_fn(pred,gt)
 
