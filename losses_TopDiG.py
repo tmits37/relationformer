@@ -34,7 +34,6 @@ class SetCriterion(nn.Module):
             }
         self.loss_weighted_ce = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([100]).cuda()) # 100에서 조정가능
         self.loss_ce = nn.BCEWithLogitsLoss()
-        # TODO mask weight 만들기 B N N 해서 위에 넣기
         
     def loss_node(self, output, target):
         """ pretrain처럼 PolyWorld와 같은 weighted BCE 사용하겠습니다
