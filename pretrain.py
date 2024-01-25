@@ -7,7 +7,6 @@ import argparse
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from dataset_inria import build_inria_data
 from models.backbone_R2U_Net import build_backbone
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.distributed import DistributedSampler
@@ -17,6 +16,7 @@ import torch.multiprocessing
 
 from pretrainer import train_epoch, validate_epoch, save_checkpoint
 from dataloader_cocostyle import build_inria_coco_data
+from dataloader_cocostyle_road import build_road_coco_data
 
 os.environ['TORCH_DISTRIBUTED_DEBUG']='DETAIL'
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
@@ -31,6 +31,8 @@ def parse_args():
     parser.add_argument('--resume', default=None, help='checkpoint of the last epoch of the model')
     parser.add_argument('--device', default='cuda',
                             help='device to use for training')
+    parser.add_argument('--dataset', default='building', 
+                        help='building_dataset')
     # When using PyTorch version >= 2.0.0, the `torch.distributed.launch`
     # will pass the `--local-rank` parameter to `tools/train.py` instead
     # of `--local_rank`.
@@ -122,15 +124,21 @@ def main(args):
     device = torch.device(args.device)
 
     ### Setting the dataset
-    train_ds = build_inria_coco_data(config, mode='train')
-    val_ds = build_inria_coco_data(config, mode='test')
+    if args.dataset == 'road':
+        print("Loading the road dataset")
+        train_ds = build_road_coco_data(config, mode='train')
+        val_ds = build_road_coco_data(config, mode='test')
+    else:
+        train_ds = build_inria_coco_data(config, mode='train')
+        val_ds = build_inria_coco_data(config, mode='test')
 
     if args.distributed: # 랜덤하게 섞어서 샘플 뽑기
         train_sampler = DistributedSampler(train_ds, shuffle=True)
-        val_sampler = DistributedSampler(val_ds, shuffle=False)
+        val_sampler = DistributedSampler(val_ds, shuffle=True)
     else: # 순서대로 샘플 뽑기
         train_sampler = torch.utils.data.RandomSampler(train_ds)
-        val_sampler = torch.utils.data.SequentialSampler(val_ds)
+        # val_sampler = torch.utils.data.SequentialSampler(val_ds)
+        val_sampler = torch.utils.data.RandomSampler(val_ds)
 
     # 데이터 셋을 지정한 배치로 나눠서 로드하기
     train_loader = DataLoader(
@@ -145,8 +153,8 @@ def main(args):
 
     val_loader = DataLoader(
         val_ds,
-        batch_size=int(config.DATA.BATCH_SIZE / args.world_size),
-        num_workers=int(config.DATA.NUM_WORKERS / args.world_size),
+        batch_size=config.DATA.BATCH_SIZE,
+        num_workers=config.DATA.NUM_WORKERS,
         sampler=val_sampler,
         collate_fn=image_graph_collate_road_network_coco,
         pin_memory=True,
@@ -155,17 +163,6 @@ def main(args):
 
     ### Setting the model
     net = build_backbone(config)
-
-    if args.distributed:
-        device = torch.device(f"cuda:{args.rank}")
-
-        net = DistributedDataParallel(net.cuda(args.local_rank), 
-                                      device_ids=[args.local_rank],
-                                      broadcast_buffers=False,
-                                      find_unused_parameters=True
-                                      )
-    else:
-        net = net.to(device)
 
     # 이부분도 일단 프리트레인 할거기 때문에 MSE loss로 변경 토치에 존재
     loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([100]).cuda())
@@ -184,14 +181,33 @@ def main(args):
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.TRAIN.LR_DROP, verbose=True)
     
+    n_epochs = config.TRAIN.EPOCHS
+    last_epoch = 1
     if args.resume:
-        checkpoint = torch.load(args.resume, map_location='cpu')
-        net.load_state_dict(checkpoint['net'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        scheduler.load_state_dict(checkpoint['scheduler'])
-        last_epoch = scheduler.last_epoch
+        checkpoint = torch.load(args.resume)
+        net.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['schedulaer_state_dict'])
         scheduler.step_size = config.TRAIN.LR_DROP
+        last_epoch = scheduler.last_epoch
 
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.to(args.local_rank)
+
+        checkpoint = None
+
+    if args.distributed:
+        device = torch.device(f"cuda:{args.rank}")
+
+        net = DistributedDataParallel(net.cuda(args.local_rank), 
+                                      device_ids=[args.local_rank],
+                                      broadcast_buffers=False,
+                                      find_unused_parameters=True
+                                      )
+    else:
+        net = net.to(device)
 
     print("Check local rank or not")
     print("=======================")
@@ -207,8 +223,7 @@ def main(args):
         log_dir=os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED)),
     ) if is_master else None
 
-    n_epochs = config.TRAIN.EPOCHS
-    for epoch in range(1, n_epochs+1):
+    for epoch in range(last_epoch, n_epochs+1):
         train_loss = train_epoch(
             net,
             data_loader=train_loader, 
@@ -225,6 +240,12 @@ def main(args):
             print(f"Epoch {epoch}: Current learning rate = {current_lr}")
 
         if is_master and (epoch % config.TRAIN.VAL_INTERVAL == 0):
+            save_checkpoint(
+                net,
+                optimizer,
+                scheduler,
+                epoch, 
+                config)
             validate_epoch(
                 net, 
                 config=config,
@@ -235,12 +256,6 @@ def main(args):
                 val_interval=config.TRAIN.VAL_INTERVAL,
                 writer=writer, 
                 is_master=is_master)
-            save_checkpoint(
-                net,
-                optimizer,
-                scheduler,
-                epoch, 
-                config)
 
     if is_master and writer:
         writer.close()

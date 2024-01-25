@@ -18,6 +18,7 @@ from losses_TopDiG import SetCriterion
 import torch.multiprocessing
 from dataloader_cocostyle import build_inria_coco_data
 from trainer_TopDiG import train_epoch, validate_epoch, save_checkpoint
+from dataloader_cocostyle_road import build_road_coco_data
 
 os.environ['TORCH_DISTRIBUTED_DEBUG']='DETAIL'
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
@@ -32,6 +33,8 @@ def parse_args():
     # parser.add_argument('--seg_net', default=None, help='checkpoint of the segmentation model')
     parser.add_argument('--device', default='cuda',
                             help='device to use for training')
+    parser.add_argument('--dataset', default='building', 
+                        help='building_dataset')
     # When using PyTorch version >= 2.0.0, the `torch.distributed.launch`
     # will pass the `--local-rank` parameter to `tools/train.py` instead
     # of `--local_rank`.
@@ -143,8 +146,14 @@ def main(args):
     init_for_distributed(args)
     device = torch.device(args.device)
 
-    train_ds = build_inria_coco_data(config, mode='train')
-    # val_ds = build_inria_coco_data(config, mode='test')
+### Setting the dataset
+    if args.dataset == 'road':
+        print("Loading the road dataset")
+        train_ds = build_road_coco_data(config, mode='train')
+        # val_ds = build_road_coco_data(config, mode='test')
+    else:
+        train_ds = build_inria_coco_data(config, mode='train')
+        # val_ds = build_inria_coco_data(config, mode='test')
 
     if args.distributed:
         train_sampler = DistributedSampler(train_ds, shuffle=True)
@@ -218,14 +227,22 @@ def main(args):
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.TRAIN.LR_DROP)
     
+    n_epochs = config.TRAIN.EPOCHS
+    last_epoch = 1
     if args.resume: # 학습 재개 코드
-        checkpoint = torch.load(args.resume, map_location='cpu')
-        net.load_state_dict(checkpoint['net'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        scheduler.load_state_dict(checkpoint['scheduler'])
-        last_epoch = scheduler.last_epoch
+        checkpoint = torch.load(args.resume)
+        net.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['schedulaer_state_dict'])
         scheduler.step_size = config.TRAIN.LR_DROP
+        last_epoch = scheduler.last_epoch + 1
 
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.to(args.local_rank)
+
+        checkpoint = None
 
     print("Check local rank or not")
     print("=======================")
@@ -241,8 +258,7 @@ def main(args):
         log_dir=os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED)),
     ) if is_master else None
 
-    n_epochs = config.TRAIN.EPOCHS
-    for epoch in range(1, n_epochs+1):
+    for epoch in range(last_epoch, n_epochs+1):
         train_loss = train_epoch(
             net,
             data_loader=train_loader,
