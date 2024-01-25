@@ -57,7 +57,7 @@ class SetCriterion(nn.Module):
     def forward(self, pred_dict, tgt_dict): # pred_htm, tgt_htm, scores1, scores2, target, masked_mat
         scores1, scores2 = pred_dict['scores1'], pred_dict['scores2']
         pred_htm, tgt_htm = pred_dict['pred_heatmaps'], tgt_dict['heatmaps']
-        adj_mat_label, masked_mat = self.matcher(pred_dict, tgt_dict, self.config)
+        adj_mat_label, masked_mat, _ = self.matcher(pred_dict, tgt_dict, self.config)
         losses = {}
         losses['node'] = self.loss_node(pred_htm, tgt_htm)
         losses['graph1'], losses['graph2'] = self.loss_graph(scores1, scores2, adj_mat_label, masked_mat)

@@ -173,7 +173,7 @@ class HungarianMatcher(nn.Module):
             adj_mat_label, masked_mat = generate_directed_adjacency_matrix(mask_type, weight_mask, sample_edge, mapping, k)
             result.append(torch.tensor(adj_mat_label, device=out_nodes.device))
             masked.append(torch.tensor(masked_mat, device=out_nodes.device))
-        return torch.stack(result), torch.stack(masked) # , indices
+        return torch.stack(result), torch.stack(masked), indices
 
 
 if __name__ == "__main__":
@@ -329,25 +329,6 @@ if __name__ == "__main__":
             else:
                 tmp.append([i, i+1])
         target['edges'].append(torch.tensor(tmp))
-    out, mask = matcher(output, target) # 마스크는 one 행렬 나옴
+    out, mask, _ = matcher(output, target) # 마스크는 one 행렬 나옴
     for b in range(len(out)):
         print(out[b].shape)
-<<<<<<< HEAD
-=======
-    # print('target_edges:', target['edges'])
-    # print(out)
-    # print(out[0][0])
-    # print(len(out[0][0]))
-    # print(out[0][1])
-    # print(len(out[0][1]))
-
-    # print(output['pred_nodes'][0][out[0][0][0]])
-    # print('out')
-    for i in range(len(out)):
-        print(out[i])
-
-    # print()
-    # for i in range(len(mask)):
-    #     print(mask[i])
-
->>>>>>> [fix] counterclockwise polygon from dataloader

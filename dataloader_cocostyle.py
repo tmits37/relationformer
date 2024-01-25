@@ -14,8 +14,6 @@ from pycocotools.coco import COCO
 from dataset_preparing import get_coords_from_densifing_points, generate_heatmap
 
 
-# dense에 대한 간격이나 표준편차를 하이퍼 파라미터로 조정가능한 코드. 히트맵 생성 때문에 속도는 좀 걸릴 수 있음
-# Inria 데이터 크기 조정하여 coco 포맷으로 맞춰준 데이터 처리가능
 def min_max_normalize(image, percentile, nodata=-1.):
     image = image.astype('float32')
     mask = np.mean(image, axis=2) != nodata * image.shape[2]
@@ -35,7 +33,7 @@ def min_max_normalize(image, percentile, nodata=-1.):
 
     return norm
 
-# 딕셔너리로 된 것을 텐서로 네 묶음을 만들어서 리스트에 넣어서 리턴
+
 def image_graph_collate_road_network_coco(batch):
     images = torch.stack([item['image'] for item in batch], 0).contiguous()
     heatmap = torch.stack([item['heatmap'] for item in batch], 0).contiguous()
@@ -91,33 +89,6 @@ def gdf_to_nodes_and_edges(gdf):
                 edges.extend(edge)
 
     return node_df[['y', 'x']].values, edges
-
-def is_clockwise_three_points(points):
-
-    for i in range(len(points) - 2):
-        p1, p2, p3 = points[i], points[i + 1], points[i + 2]
-        cross_product = (p2[0] - p1[0]) * (p3[1] - p1[1]) - (p2[1] - p1[1]) * (p3[0] - p1[0])
-        
-        if cross_product != 0:
-            return cross_product < 0
-
-    raise ValueError("All points are collinear or polygon has less than 3 points")
-
-def calculate_area_polygon(polygon):
-    """Calculate the signed area of a shapely Polygon."""
-    if not isinstance(polygon, Polygon):
-        raise TypeError("Input must be a shapely.geometry.Polygon object")
-
-    points = list(polygon.exterior.coords)
-    area = 0.0
-    n = len(points)
-
-    for i in range(n):
-        j = (i + 1) % n
-        area += points[i][0] * points[j][1]
-        area -= points[j][0] * points[i][1]
-
-    return area / 2.0
 
 
 class CrowdAI(Dataset):
@@ -209,17 +180,10 @@ class CrowdAI(Dataset):
         origin_gdf = self.prepare_annotations(img)
         coords, gdf = get_coords_from_densifing_points(origin_gdf, gap_distance=self.gap_distance, nms=self.nms) # [N, 2]
         heatmap = generate_heatmap(coords, image.shape[:2], sigma=self.sigma)
-        # 폴리곤 반시계 방향으로 통일
-        new_poly = []
-        for polygon in gdf['geometry']:
-            points = list(polygon.exterior.coords)
-            if calculate_area_polygon(polygon) > 0:
-                polygon = Polygon(points[::-1])
-            # 시계방향 폴리곤 중에서 점 3개를 뽑았을 때 반시계 방향으로 세개 뽑힐 수 있음
-            # if is_clockwise_three_points(points):
-            #     polygon = Polygon(points[::-1])
-            new_poly.append(polygon)
-        gdf = gpd.GeoDataFrame(geometry=new_poly)
+        
+        counterclockwise_poly = [Polygon(list(polygon.exterior.coords)[::-1]) if polygon.exterior.is_ccw else polygon 
+                    for polygon in gdf['geometry']]
+        gdf = gpd.GeoDataFrame(geometry=counterclockwise_poly)
 
         nodes, edges = gdf_to_nodes_and_edges(gdf)
         nodes = nodes / image.shape[0]
