@@ -25,6 +25,7 @@ import warnings
 warnings.filterwarnings('ignore', category=FutureWarning)
 
 from shapely.geometry import Polygon, MultiPolygon
+from Inria_heatmap import raster_to_polygons
 
 
 def add_to_gt_polygon():
@@ -61,6 +62,7 @@ def canvasPoly2WorldCoord(gdf, geo_transform):
         return affinity.affine_transform(geom, [x_gsd, 0, 0, y_gsd, tl_x, tl_y])
     gdf['geometry'] = gdf['geometry'].apply(_transform_geom)
     return gdf
+
 
 def worldCoordPoly2CanvasPolygon2(gdf, geo_transform):
     x_gsd, _, tl_x, _, y_gsd, tl_y, _, _, _ = geo_transform
@@ -401,15 +403,6 @@ def original_processing(args):
                                     coor_list = mapping(poly)['coordinates']
                                     for part_poly in coor_list:
                                         p_seg.append(np.asarray(part_poly).ravel().tolist())
-                                    # if len(np.asarray(p_seg).shape) == 1:
-                                    #     # print(np.asarray(p_seg).shape)
-                                    #     print(p_seg)
-                                    #     print(type(poly))
-                                    #     print(poly.area)
-                                    #     print(coor_list)
-                                    #     print(os.path.join(input_image_path, label_name + '.tif'))
-                                    #     print(os.path.join(input_gt_path, label_name + '.tif'))
-                                    #     print('---')
                                     anno_info = {
                                         'id': train_ob_id,
                                         'image_id': train_im_id,
@@ -421,6 +414,94 @@ def original_processing(args):
                                     }
                                     output_data_train['annotations'].append(anno_info)
                                     train_ob_id += 1
+                    # get patch info
+                    p_name = label_name + '-' + str(train_im_id) + '.tif'
+                    patch_info = {'id': train_im_id, 'file_name': p_name, 'width': patch_size, 'height': patch_size}
+                    output_data_train['images'].append(patch_info)
+                    # save patch image
+                    io.imsave(os.path.join(output_im_train, p_name), p_im)
+                    train_im_id += 1
+
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    with open(os.path.join(save_path, 'annotation.json'), 'w') as f_json:
+        json.dump(output_data_train, f_json)
+    return None
+
+
+def inria_htm_processing(args):
+    input_image_path = args['input_image_path']
+    input_gt_path =args['input_gt_path']
+    save_path = args['save_path']
+    cities = args['cities']
+    val_set = args['val_set']
+    output_im_train = args['output_im_train']
+    patch_width = args['patch_width']
+    patch_height = args['patch_height']
+    patch_overlap = args['patch_overlap']
+    patch_size = args['patch_size']
+    output_data_train = args['output_data_train']
+
+    train_ob_id = 0
+    train_im_id = 0
+    # read in data with npy format
+    input_label = os.listdir(input_gt_path)
+    # print(input_label)
+    for g_id, label in enumerate(tqdm(input_label)):
+        # read data
+        label_info = [''.join(list(g)) for k, g in groupby(label, key=lambda x: x.isdigit())]
+        label_name = label_info[0] + label_info[1]
+        raster = rasterio.open(os.path.join(input_image_path, label_name + '.tif'))
+        raster_gt = rasterio.open(os.path.join(input_gt_path, label_name + '.tif'))
+        im_h, im_w = raster.shape
+        raster_shape = (im_h, im_w, 3)
+
+        # not in 
+        if label_info[1] not in val_set and label_info[0] in cities:
+            # for training set, split image to 512x512
+            patch_list = crop2patch(raster_shape, patch_width, patch_height, patch_overlap)
+            print(label_name)
+            for pid, pa in enumerate(patch_list):
+                x_ul, y_ul, pw, ph = pa
+
+                window = rasterio.windows.Window(x_ul, y_ul, pw, ph)
+                p_gt = raster_gt.read(window=window)[0]
+                p_im = raster.read(window=window).transpose(1,2,0)
+                p_gts = []
+                p_ims = []
+                p_im_rd, p_gt_rd = lt_crop(p_im, p_gt, patch_size)
+                p_gts.append(p_gt_rd)
+                p_ims.append(p_im_rd)
+
+                for p_im, p_gt in zip(p_ims, p_gts):
+                    if np.sum(p_gt > 0) > 5:
+                        gdf = raster_to_polygons(raster_gt, window, min_patch_objs=3, tolerance=1.2)
+                        
+                        if gdf is None or gdf.empty:
+                            pass
+                        else:
+                            p_polygons = gdf.geometry.to_list()
+                            for poly in p_polygons:
+                                p_area = round(poly.area, 2)
+                                if p_area > 0:
+                                    p_bbox = [poly.bounds[0], poly.bounds[1],
+                                            poly.bounds[2]-poly.bounds[0], poly.bounds[3]-poly.bounds[1]]
+                                    if p_bbox[2] > 5 and p_bbox[3] > 5:
+                                        p_seg = []
+                                        coor_list = mapping(poly)['coordinates']
+                                        for part_poly in coor_list:
+                                            p_seg.append(np.asarray(part_poly).ravel().tolist())
+                                        anno_info = {
+                                            'id': train_ob_id,
+                                            'image_id': train_im_id,
+                                            'segmentation': p_seg,
+                                            'area': p_area,
+                                            'bbox': p_bbox,
+                                            'category_id': 100,
+                                            'iscrowd': 0
+                                        }
+                                        output_data_train['annotations'].append(anno_info)
+                                        train_ob_id += 1
                     # get patch info
                     p_name = label_name + '-' + str(train_im_id) + '.tif'
                     patch_info = {'id': train_im_id, 'file_name': p_name, 'width': patch_size, 'height': patch_size}
@@ -556,7 +637,7 @@ if __name__ == '__main__':
 
     input_image_path = '/nas/Dataset/inria/AerialImageDataset/train/images'
     input_gt_path = '/nas/Dataset/inria/AerialImageDataset/train/gt'
-    save_path = '/nas/k8s/dev/research/doyoungi/dataset/Inria_building/cocostyle_framefield_test'
+    save_path = '/nas/k8s/dev/research/doyoungi/dataset/Inria_building/cocostyle_inria'
 
     cities = ['austin', 'chicago', 'kitsap', 'tyrol-w', 'vienna']
     val_set = ['10', '20']
@@ -596,11 +677,14 @@ if __name__ == '__main__':
         'framefield_aligned_path': framefield_aligned_path,
     }
 
-    options = 'FrameField'
+    options = 'Inria_Htm'
+    print(options)
     if options == 'HiSup':
         original_processing(args)
     elif options == 'FrameField':
         framefield_processing(args)
+    elif options == 'Inria_Htm':
+        inria_htm_processing(args)
     else:
         pass
 
