@@ -92,6 +92,33 @@ def gdf_to_nodes_and_edges(gdf):
 
     return node_df[['y', 'x']].values, edges
 
+def is_clockwise_three_points(points):
+
+    for i in range(len(points) - 2):
+        p1, p2, p3 = points[i], points[i + 1], points[i + 2]
+        cross_product = (p2[0] - p1[0]) * (p3[1] - p1[1]) - (p2[1] - p1[1]) * (p3[0] - p1[0])
+        
+        if cross_product != 0:
+            return cross_product < 0
+
+    raise ValueError("All points are collinear or polygon has less than 3 points")
+
+def calculate_area_polygon(polygon):
+    """Calculate the signed area of a shapely Polygon."""
+    if not isinstance(polygon, Polygon):
+        raise TypeError("Input must be a shapely.geometry.Polygon object")
+
+    points = list(polygon.exterior.coords)
+    area = 0.0
+    n = len(points)
+
+    for i in range(n):
+        j = (i + 1) % n
+        area += points[i][0] * points[j][1]
+        area -= points[j][0] * points[i][1]
+
+    return area / 2.0
+
 
 class CrowdAI(Dataset):
     """A dataset class for handling and processing data from the CrowdAI dataset.
@@ -182,12 +209,23 @@ class CrowdAI(Dataset):
         origin_gdf = self.prepare_annotations(img)
         coords, gdf = get_coords_from_densifing_points(origin_gdf, gap_distance=self.gap_distance, nms=self.nms) # [N, 2]
         heatmap = generate_heatmap(coords, image.shape[:2], sigma=self.sigma)
+        # 폴리곤 반시계 방향으로 통일
+        new_poly = []
+        for polygon in gdf['geometry']:
+            points = list(polygon.exterior.coords)
+            if calculate_area_polygon(polygon) > 0:
+                polygon = Polygon(points[::-1])
+            # 시계방향 폴리곤 중에서 점 3개를 뽑았을 때 반시계 방향으로 세개 뽑힐 수 있음
+            # if is_clockwise_three_points(points):
+            #     polygon = Polygon(points[::-1])
+            new_poly.append(polygon)
+        gdf = gpd.GeoDataFrame(geometry=new_poly)
 
         nodes, edges = gdf_to_nodes_and_edges(gdf)
         nodes = nodes / image.shape[0]
 
         image_idx = torch.tensor([idx])
-        image = resize(image, (320, 320, 3), anti_aliasing=True, preserve_range=True) # TODO 일단 300->320, 변형 정도 체크
+        image = resize(image, (320, 320, 3), anti_aliasing=True, preserve_range=True)
         image = torch.from_numpy(image)
         image = image.float()
         image = image.permute(2,0,1) / 255.0

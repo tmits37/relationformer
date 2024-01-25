@@ -53,11 +53,11 @@ class Sinkhorn(torch.autograd.Function):
 
 
 if __name__ == '__main__':
-    c = torch.rand((1, 5, 4)).cuda()
+    c = torch.rand((1, 8, 7)).cuda()
     # tmp = [[[1,7,3],[5,10,4],[7,4,1]]]
     # c = torch.tensor(tmp).cuda()
-    a = torch.ones(1, 5).cuda()
-    b = torch.ones(1, 4).cuda()
+    a = torch.ones(1, 8).cuda()
+    b = torch.ones(1, 7).cuda()
     # a = torch.ones(1, 3).cuda()
     # b = torch.ones(1, 3).cuda()
     # p = Sinkhorn.apply(c, a, b, 100, 1e-2)
