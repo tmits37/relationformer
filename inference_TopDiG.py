@@ -20,6 +20,9 @@ from tqdm import tqdm
 from dataloader_cocostyle import CrowdAI, image_graph_collate_road_network_coco
 from models.TopDiG import build_TopDiG
 
+from dataloader_cocostyle import build_inria_coco_data
+from dataloader_cocostyle_road import build_road_coco_data
+
 
 class obj:
     def __init__(self, dict1):
@@ -169,18 +172,13 @@ def parse_args():
     parser.add_argument('config', type=str, help='test config file path')
     parser.add_argument('checkpoint', type=str, help='checkpoint file')
     parser.add_argument('--show-dir', type=str, required=True, help='savedir')
+    parser.add_argument('--dataset', default='building', 
+                    help='building_dataset')
     args = parser.parse_args()
     return args
 
 
-if __name__ == '__main__':
-    # # 경로 직접 전달
-    # config_file = "/nas/tsgil/TopDiG_train/runs/baseline_TopDiG_train_epoch20_sinkhorn_diag_10/config.yaml" # noqa
-    # ckpt_path = f"/nas/tsgil/TopDiG_train/runs/baseline_TopDiG_train_epoch20_sinkhorn_diag_10/models/epochs_20.pth" # noqa
-    # show_dir = f'/nas/tsgil/gil/infer_TopDiG/exp_sinkhorn_diag/epochs_20'
-    # metric_file = '/nas/tsgil/gil/infer_TopDiG/exp_sinkhorn_diag/metrics_log.txt' # noqa
-
-    # 경로 명령어로 전달
+if __name__ == "__main__":
     args = parse_args()
     config_file = args.config
     ckpt_path = args.checkpoint
@@ -196,7 +194,6 @@ if __name__ == '__main__':
     anno_path = '/nas/tsgil/dataset/Inria_building/cocostyle_inria_test/annotation.json'  # noqa
     dataset = CrowdAI(images_directory=img_dir, annotations_path=anno_path)
     val_sampler = torch.utils.data.SequentialSampler(dataset)
-
     val_loader = DataLoader(
         dataset,
         batch_size=config.DATA.BATCH_SIZE,
@@ -235,8 +232,7 @@ if __name__ == '__main__':
     pixel_results = {'acc': [], 'f1': [], 'miou': [], 'building_iou': []}
     topo_results = {'acc': [], 'f1': [], 'miou': [], 'building_iou': []}
     iteration = 0
-    for idx, (images, heatmaps, nodes,
-              edges) in enumerate(tqdm(val_loader, total=len(val_loader))):
+    for idx, (images, heatmaps, nodes, edges) in enumerate(tqdm(val_loader, total=len(val_loader))):
         iteration = iteration + 1
         # if iteration == 2:
         #     break
