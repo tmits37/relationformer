@@ -1,36 +1,44 @@
+import argparse
+import json
 import os
 from shutil import copyfile
-import yaml
-import json
-import argparse
 
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-from dataset_inria import build_inria_data
-from models.backbone_R2U_Net import build_backbone
-from torch.utils.tensorboard import SummaryWriter
-from torch.utils.data.distributed import DistributedSampler
-from torch.nn.parallel import DistributedDataParallel
-
 import torch.multiprocessing
+import torch.nn as nn
+import yaml
+from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
+from torch.utils.tensorboard import SummaryWriter
 
-from pretrainer import train_epoch, validate_epoch, save_checkpoint
 from dataloader_cocostyle import build_inria_coco_data
+from dataloader_cocostyle_road import build_road_coco_data
+from models.backbone_R2U_Net import build_backbone
+from pretrainer import save_checkpoint, train_epoch, validate_epoch
 
-os.environ['TORCH_DISTRIBUTED_DEBUG']='DETAIL'
+os.environ['TORCH_DISTRIBUTED_DEBUG'] = 'DETAIL'
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config',
+    parser.add_argument(
+        '--config',
+        default=None,
+        help=(
+            'config file (.yml) containing the hyper-parameters for training. '
+            'If None, use the nnU-Net config. See /config for examples.'),
+    )
+    parser.add_argument('--resume',
                         default=None,
-                        help='config file (.yml) containing the hyper-parameters for training. '
-                            'If None, use the nnU-Net config. See /config for examples.')
-    parser.add_argument('--resume', default=None, help='checkpoint of the last epoch of the model')
-    parser.add_argument('--device', default='cuda',
-                            help='device to use for training')
+                        help='checkpoint of the last epoch of the model')
+    parser.add_argument('--device',
+                        default='cuda',
+                        help='device to use for training')
+    parser.add_argument('--dataset',
+                        default='building',
+                        help='building_dataset')
     # When using PyTorch version >= 2.0.0, the `torch.distributed.launch`
     # will pass the `--local-rank` parameter to `tools/train.py` instead
     # of `--local_rank`.
@@ -40,9 +48,9 @@ def parse_args():
     parser.add_argument('--rank', type=int, default=0)
     args = parser.parse_args()
     if 'LOCAL_RANK' not in os.environ:
-        print("Setting the Local Rank")
+        print('Setting the Local Rank')
         os.environ['LOCAL_RANK'] = str(args.local_rank)
-        
+
     return args
 
 
@@ -57,12 +65,13 @@ def image_graph_collate_road_network_coco(batch):
 
 def init_for_distributed(args):
     if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
-        print(os.environ['RANK'], os.environ['LOCAL_RANK'], os.environ['WORLD_SIZE'])
-        args.rank = int(os.environ["RANK"])
+        print(os.environ['RANK'], os.environ['LOCAL_RANK'],
+              os.environ['WORLD_SIZE'])
+        args.rank = int(os.environ['RANK'])
         args.world_size = int(os.environ['WORLD_SIZE'])
         args.local_rank = int(os.environ['LOCAL_RANK'])
         args.distributed = True
-        os.environ['TORCH_DISTRIBUTED_DEBUG']='DETAIL'
+        os.environ['TORCH_DISTRIBUTED_DEBUG'] = 'DETAIL'
     elif 'SLURM_PROCID' in os.environ:
         args.rank = int(os.environ['SLURM_PROCID'])
         args.local_rank = args.rank % torch.cuda.device_count()
@@ -73,13 +82,15 @@ def init_for_distributed(args):
         return None
 
     torch.cuda.set_device(args.local_rank)
-    args.dist_backend = 'nccl' # nvcc
-    print('| distributed init (rank {}): {}'.format(
-        args.rank, 'env://'), flush=True)
-    torch.distributed.init_process_group(backend=args.dist_backend, 
-                                         init_method="env://127.0.0.1:29500",
-                                         world_size=args.world_size, 
-                                         rank=args.rank)
+    args.dist_backend = 'nccl'  # nvcc
+    print('| distributed init (rank {}): {}'.format(args.rank, 'env://'),
+          flush=True)
+    torch.distributed.init_process_group(
+        backend=args.dist_backend,
+        init_method='env://127.0.0.1:29500',
+        world_size=args.world_size,
+        rank=args.rank,
+    )
     torch.distributed.barrier()
     return None
 
@@ -102,14 +113,21 @@ def main(args):
         print(config['log']['message'])
     config = dict2obj(config)
 
-    exp_path = os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED))
-    if os.path.exists(exp_path) and args.resume == None:
-        print('ERROR: Experiment folder exist, please change exp name in config file')
+    exp_path = os.path.join(
+        config.TRAIN.SAVE_PATH,
+        'runs',
+        '%s_%d' % (config.log.exp_name, config.DATA.SEED),
+    )
+    if os.path.exists(exp_path) and args.resume is None:
+        print('ERROR: Experiment folder exist, '
+              'please change exp name in config file')
     else:
         try:
             os.makedirs(exp_path)
-            copyfile(args.config, os.path.join(exp_path, "config.yaml"))
-        except:
+            copyfile(args.config, os.path.join(exp_path, 'config.yaml'))
+        except FileExistsError:
+            pass
+        except FileNotFoundError:
             pass
 
     torch.backends.cudnn.benchmark = True
@@ -121,16 +139,22 @@ def main(args):
     print(args.rank, args.local_rank)
     device = torch.device(args.device)
 
-    ### Setting the dataset
-    train_ds = build_inria_coco_data(config, mode='train')
-    val_ds = build_inria_coco_data(config, mode='test')
+    # Setting the dataset
+    if args.dataset == 'road':
+        print('Loading the road dataset')
+        train_ds = build_road_coco_data(config, mode='train')
+        val_ds = build_road_coco_data(config, mode='test')
+    else:
+        train_ds = build_inria_coco_data(config, mode='train')
+        val_ds = build_inria_coco_data(config, mode='test')
 
-    if args.distributed: # 랜덤하게 섞어서 샘플 뽑기
+    if args.distributed:
         train_sampler = DistributedSampler(train_ds, shuffle=True)
-        val_sampler = DistributedSampler(val_ds, shuffle=False)
-    else: # 순서대로 샘플 뽑기
+        val_sampler = DistributedSampler(val_ds, shuffle=True)
+    else:
         train_sampler = torch.utils.data.RandomSampler(train_ds)
-        val_sampler = torch.utils.data.SequentialSampler(val_ds)
+        # val_sampler = torch.utils.data.SequentialSampler(val_ds)
+        val_sampler = torch.utils.data.RandomSampler(val_ds)
 
     # 데이터 셋을 지정한 배치로 나눠서 로드하기
     train_loader = DataLoader(
@@ -140,61 +164,71 @@ def main(args):
         sampler=train_sampler,
         collate_fn=image_graph_collate_road_network_coco,
         pin_memory=True,
-        drop_last=True
-        )
+        drop_last=True,
+    )
 
     val_loader = DataLoader(
         val_ds,
-        batch_size=int(config.DATA.BATCH_SIZE / args.world_size),
-        num_workers=int(config.DATA.NUM_WORKERS / args.world_size),
+        batch_size=config.DATA.BATCH_SIZE,
+        num_workers=config.DATA.NUM_WORKERS,
         sampler=val_sampler,
         collate_fn=image_graph_collate_road_network_coco,
         pin_memory=True,
         drop_last=True,
-        )
+    )
 
-    ### Setting the model
+    # Setting the model
     net = build_backbone(config)
 
-    if args.distributed:
-        device = torch.device(f"cuda:{args.rank}")
+    loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([100]).cuda())
 
-        net = DistributedDataParallel(net.cuda(args.local_rank), 
-                                      device_ids=[args.local_rank],
-                                      broadcast_buffers=False,
-                                      find_unused_parameters=True
-                                      )
+    # Setting optimizer
+    param_dicts = [{
+        'params': [p for name, p in net.named_parameters() if p.requires_grad],
+        'lr':
+        float(config.TRAIN.LR),
+    }]
+
+    optimizer = torch.optim.AdamW(
+        param_dicts,
+        lr=float(config.TRAIN.LR),
+        weight_decay=float(config.TRAIN.WEIGHT_DECAY),
+    )
+
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=config.TRAIN.LR_DROP, verbose=True)
+
+    n_epochs = config.TRAIN.EPOCHS
+    last_epoch = 1
+    if args.resume:
+        checkpoint = torch.load(args.resume)
+        net.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['schedulaer_state_dict'])
+        scheduler.step_size = config.TRAIN.LR_DROP
+        last_epoch = scheduler.last_epoch
+
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.to(args.local_rank)
+
+        checkpoint = None
+
+    if args.distributed:
+        device = torch.device(f'cuda:{args.rank}')
+
+        net = DistributedDataParallel(
+            net.cuda(args.local_rank),
+            device_ids=[args.local_rank],
+            broadcast_buffers=False,
+            find_unused_parameters=True,
+        )
     else:
         net = net.to(device)
 
-    # 이부분도 일단 프리트레인 할거기 때문에 MSE loss로 변경 토치에 존재
-    loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([100]).cuda())
-
-    ### Setting optimizer
-    param_dicts = [
-        {
-            "params": [p for name, p in net.named_parameters() if p.requires_grad],
-            "lr": float(config.TRAIN.LR)
-        }
-    ]
-
-    optimizer = torch.optim.AdamW(
-        param_dicts, lr=float(config.TRAIN.LR), weight_decay=float(config.TRAIN.WEIGHT_DECAY)
-    )
-
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.TRAIN.LR_DROP, verbose=True)
-    
-    if args.resume:
-        checkpoint = torch.load(args.resume, map_location='cpu')
-        net.load_state_dict(checkpoint['net'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        scheduler.load_state_dict(checkpoint['scheduler'])
-        last_epoch = scheduler.last_epoch
-        scheduler.step_size = config.TRAIN.LR_DROP
-
-
-    print("Check local rank or not")
-    print("=======================")
+    print('Check local rank or not')
+    print('=======================')
     print(args.local_rank)
 
     if args.local_rank == 0:
@@ -202,45 +236,42 @@ def main(args):
     else:
         is_master = False
 
+    writer = (SummaryWriter(log_dir=os.path.join(
+        config.TRAIN.SAVE_PATH,
+        'runs',
+        '%s_%d' % (config.log.exp_name, config.DATA.SEED),
+    ), ) if is_master else None)
 
-    writer = SummaryWriter(
-        log_dir=os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED)),
-    ) if is_master else None
-
-    n_epochs = config.TRAIN.EPOCHS
-    for epoch in range(1, n_epochs+1):
+    for epoch in range(last_epoch, n_epochs + 1):
         train_loss = train_epoch(
             net,
-            data_loader=train_loader, 
-            loss_fn=loss, 
-            optimizer=optimizer, 
-            device=device, 
-            epoch=epoch, 
-            writer=writer, 
-            is_master=is_master)
+            data_loader=train_loader,
+            loss_fn=loss,
+            optimizer=optimizer,
+            device=device,
+            epoch=epoch,
+            writer=writer,
+            is_master=is_master,
+        )
         if is_master:
             scheduler.step()
             current_lr = scheduler.get_last_lr()
-            print(f"Epoch {epoch}, Training Loss: {train_loss}")
-            print(f"Epoch {epoch}: Current learning rate = {current_lr}")
+            print(f'Epoch {epoch}, Training Loss: {train_loss}')
+            print(f'Epoch {epoch}: Current learning rate = {current_lr}')
 
         if is_master and (epoch % config.TRAIN.VAL_INTERVAL == 0):
+            save_checkpoint(net, optimizer, scheduler, epoch, config)
             validate_epoch(
-                net, 
-                config=config,
-                data_loader=val_loader, 
-                loss_fn=loss, 
-                device=device, 
-                epoch=epoch, 
-                val_interval=config.TRAIN.VAL_INTERVAL,
-                writer=writer, 
-                is_master=is_master)
-            save_checkpoint(
                 net,
-                optimizer,
-                scheduler,
-                epoch, 
-                config)
+                config=config,
+                data_loader=val_loader,
+                loss_fn=loss,
+                device=device,
+                epoch=epoch,
+                val_interval=config.TRAIN.VAL_INTERVAL,
+                writer=writer,
+                is_master=is_master,
+            )
 
     if is_master and writer:
         writer.close()
@@ -248,8 +279,9 @@ def main(args):
     if args.distributed:
         torch.distributed.barrier()
         torch.distributed.destroy_process_group()
-        print("Destroyed")
-    exit(0) 
+        print('Destroyed')
+    exit(0)
+
 
 if __name__ == '__main__':
     args = parse_args()

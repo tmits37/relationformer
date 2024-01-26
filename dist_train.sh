@@ -1,7 +1,7 @@
 CONFIG=$1
 GPUS=$2
 
-pip3 uninstall -y scikit-image 
+pip3 uninstall -y scikit-image
 
 pip3 install -r requirements.txt
 pip3 install tensorboard

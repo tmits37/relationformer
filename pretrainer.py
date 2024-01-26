@@ -1,31 +1,24 @@
 import os
-from tqdm import tqdm
 
 import torch
+from tqdm import tqdm
 
-def train_epoch(model,
-                data_loader, 
-                loss_fn, 
-                optimizer, 
-                device, 
-                epoch, 
-                writer, 
-                is_master
-                ):
+
+def train_epoch(model, data_loader, loss_fn, optimizer, device, epoch, writer,
+                is_master):
 
     model.train()
 
-
     total_loss = 0
-    with tqdm(data_loader, unit="batch") as tepoch:
+    with tqdm(data_loader, unit='batch') as tepoch:
         max_iter_in_epoch = len(tepoch)
         for idx, batch in enumerate(tepoch):
-            tepoch.set_description(f"Epoch {epoch}")
+            tepoch.set_description(f'Epoch {epoch}')
             images, heatmaps, _, _ = batch
             images = images.to(device)
             heatmaps = heatmaps.to(device)
 
-            optimizer.zero_grad() # 배치별 그래디언트 초기화
+            optimizer.zero_grad()  # 배치별 그래디언트 초기화
             out = model(images)
             losses = loss_fn(out[1], heatmaps)
             loss = losses
@@ -36,32 +29,24 @@ def train_epoch(model,
             total_loss += loss.item()
             if is_master:
                 iters = int(max_iter_in_epoch * (epoch - 1) + idx)
-                writer.add_scalar('Train/Loss', loss.item() / len(images), iters)
-            
-            tepoch.set_postfix(loss=loss.item() / len(images))
+                writer.add_scalar('Train/Loss',
+                                  loss.item() / len(images), iters)
 
+            tepoch.set_postfix(loss=loss.item() / len(images))
 
     return total_loss / len(data_loader)
 
 
-def validate_epoch(
-    model,
-    config,
-    data_loader, 
-    loss_fn, 
-    device, 
-    epoch, 
-    val_interval,
-    writer, 
-    is_master):
+def validate_epoch(model, config, data_loader, loss_fn, device, epoch,
+                   val_interval, writer, is_master):
 
     model.train()
 
     total_loss = 0
-    with tqdm(data_loader, unit="batch") as tepoch:
+    with tqdm(data_loader, unit='batch') as tepoch:
         max_iter_in_epoch = len(tepoch)
         for idx, batch in enumerate(tepoch):
-            tepoch.set_description(f"Val: {epoch}")
+            tepoch.set_description(f'Val: {epoch}')
             images, heatmaps, _, _ = batch
             images = images.to(device)
             heatmaps = heatmaps.to(device)
@@ -72,7 +57,8 @@ def validate_epoch(
             total_loss += loss.item()
 
             if is_master:
-                iters = int(max_iter_in_epoch * (epoch - 1) / val_interval + idx)
+                iters = int(max_iter_in_epoch * (epoch - 1) / val_interval +
+                            idx)
                 writer.add_scalar('Val/Loss', loss.item() / len(images), iters)
 
             tepoch.set_postfix(loss=loss.item() / len(images))
@@ -81,8 +67,7 @@ def validate_epoch(
 
 
 def save_checkpoint(model, optimizer, scheduler, epoch, config):
-    """
-    Save a checkpoint of the training process.
+    """Save a checkpoint of the training process.
 
     Args:
         model (torch.nn.Module): The model to save.
@@ -95,14 +80,19 @@ def save_checkpoint(model, optimizer, scheduler, epoch, config):
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
-        'schedulaer_state_dict': scheduler.state_dict()
+        'schedulaer_state_dict': scheduler.state_dict(),
     }
 
     # If using DDP, save the original model wrapped inside DDP
     if isinstance(model, torch.nn.parallel.DistributedDataParallel):
         checkpoint['model_state_dict'] = model.module.state_dict()
 
-    savedir = os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED), 'models')
+    savedir = os.path.join(
+        config.TRAIN.SAVE_PATH,
+        'runs',
+        '%s_%d' % (config.log.exp_name, config.DATA.SEED),
+        'models',
+    )
     os.makedirs(savedir, exist_ok=True)
     checkpoint_path = os.path.join(savedir, f'epochs_{epoch}.pth')
 

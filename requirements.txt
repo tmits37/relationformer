@@ -1,7 +1,7 @@
+hopcroftkarp
 pyvista==0.42.3
+PyYAML==6.0
+rtree
 scikit_image==0.18.2
 scipy==1.8.0
-PyYAML==6.0
 svgwrite
-hopcroftkarp
-rtree

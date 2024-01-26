@@ -1,63 +1,40 @@
 import os
 import random
+import numpy as np
 import pandas as pd
 import geopandas as gpd
 from skimage import io
-from shapely import Polygon
+from skimage.transform import resize
+from shapely.geometry import Polygon, LineString
 
 import torch
 from torch.utils.data import Dataset
 from pycocotools.coco import COCO
 
 from dataset_preparing import get_coords_from_densifing_points, generate_heatmap
+from dataloader_cocostyle import gdf_to_nodes_and_edges
 
 
-def min_max_normalize(image, percentile, nodata=-1.):
-    image = image.astype('float32')
-    mask = np.mean(image, axis=2) != nodata * image.shape[2]
-
-    percent_min = np.percentile(image, percentile, axis=(0, 1))
-    percent_max = np.percentile(image, 100-percentile, axis=(0, 1))
-
-    if image.shape[1] * image.shape[0] - np.sum(mask) > 0:
-        mdata = np.ma.masked_equal(image, nodata, copy=False)
-        mdata = np.ma.filled(mdata, np.nan)
-        percent_min = np.nanpercentile(mdata, percentile, axis=(0, 1))
-
-    norm = (image-percent_min) / (percent_max - percent_min)
-    norm[norm < 0] = 0
-    norm[norm > 1] = 1
-    norm = (norm * 255).astype('uint8') * mask[:, :, np.newaxis]
-
-    return norm
-
-
-def image_graph_collate_road_network_coco(batch):
-    images = torch.stack([item['image'] for item in batch], 0).contiguous()
-    heatmap = torch.stack([item['heatmap'] for item in batch], 0).contiguous()
-    points = [item['nodes'] for item in batch]
-    edges = [item['edges'] for item in batch]
-
-    return [images, heatmap, points, edges]
-
-
-def create_polygon(segmentation):
+def create_linestring(segmentation):
     # COCO segmentation format is [x1, y1, x2, y2, ..., xn, yn]
     # We need to reshape it to [(x1, y1), (x2, y2), ..., (xn, yn)]
-    points = list(zip(segmentation[::2], segmentation[1::2]))
-    return Polygon(points)
+    # points = list(zip(segmentation[::2], segmentation[1::2]))
+    if len(segmentation[0]) == 1:
+        return None
+    else:
+        return LineString(segmentation)
 
 
-def gdf_to_nodes_and_edges(gdf):
+def gdf_to_nodes_and_edges_linestring(gdf):
     nodes = []
     for _, row in gdf.iterrows():
         polygon = row['geometry']
-        if polygon.geom_type == 'Polygon':
-            for x, y in polygon.exterior.coords:
+        if polygon.geom_type == 'LineString':
+            for x, y in polygon.coords:
                 nodes.append((x, y))
-        elif polygon.geom_type == 'MultiPolygon':
+        elif polygon.geom_type == 'MultiLineString':
             for part in polygon:
-                for x, y in part.exterior.coords:
+                for x, y in part.coords:
                     nodes.append((x, y))
         else:
             raise AttributeError
@@ -72,15 +49,15 @@ def gdf_to_nodes_and_edges(gdf):
     edges = []
     for _, row in gdf.iterrows():
         polygon = row['geometry']
-        if polygon.geom_type == 'Polygon':
-            coords = polygon.exterior.coords[:-1]  # Exclude closing vertex
+        if polygon.geom_type == 'LineString':
+            coords = polygon.coords  # Exclude closing vertex
             edge = [(node_df[(node_df['x'] == x) & (node_df['y'] == y)].index[0], 
                     node_df[(node_df['x'] == coords[(i+1)%len(coords)][0]) & (node_df['y'] == coords[(i+1)%len(coords)][1])].index[0]) 
                     for i, (x, y) in enumerate(coords)]
             edges.extend(edge)
-        elif polygon.geom_type == 'MultiPolygon':
+        elif polygon.geom_type == 'MultiLineString':
             for part in polygon:
-                coords = part.exterior.coords[:-1]
+                coords = part.coords
                 edge = [(node_df[(node_df['x'] == x) & (node_df['y'] == y)].index[0], 
                         node_df[(node_df['x'] == coords[(i+1)%len(coords)][0]) & (node_df['y'] == coords[(i+1)%len(coords)][1])].index[0]) 
                         for i, (x, y) in enumerate(coords)]
@@ -89,7 +66,7 @@ def gdf_to_nodes_and_edges(gdf):
     return node_df[['y', 'x']].values, edges
 
 
-class CrowdAI(Dataset):
+class CrowdAIRoad(Dataset):
     """A dataset class for handling and processing data from the CrowdAI dataset.
 
     Attributes:
@@ -110,8 +87,9 @@ class CrowdAI(Dataset):
     def __init__(self, 
                  images_directory, 
                  annotations_path,
-                 gap_datance=20,
-                 sigma=1.5):
+                 gap_distance=10,
+                 sigma=1.0,
+                 nms=False):
 
         self.IMAGES_DIRECTORY = images_directory
         self.ANNOTATIONS_PATH = annotations_path
@@ -121,8 +99,13 @@ class CrowdAI(Dataset):
         self.len = len(self.image_ids)
 
         self.max_points = 256 # TODO: It should be restricted the number when gt points over the max points limit
-        self.gap_distance = gap_datance
+        self.gap_distance = gap_distance
         self.sigma = sigma
+        self.nms = nms
+
+        print("Built Dataset Options:")
+        print(f"--Num.of images: {self.len}")
+        print(f"--Gap Distance: {self.gap_distance}", f"--Sigma: {self.sigma}", f"--nms: {self.nms}")
 
     def prepare_annotations(self, img):
         """Prepares annotations for an image.
@@ -138,8 +121,12 @@ class CrowdAI(Dataset):
 
         data = []
         for ann in annotations:
-            polygon = create_polygon(ann['segmentation'][0])
-            data.append({'id': ann['id'], 'geometry': polygon})
+            # print(ann['segmentation'][0], ann['segmentation'][1])
+            polygon = create_linestring(ann['segmentation'])
+            if polygon is None:
+                pass
+            else:
+                data.append({'id': ann['id'], 'geometry': polygon})
         gdf = gpd.GeoDataFrame(data, geometry='geometry')
         return gdf
 
@@ -169,19 +156,41 @@ class CrowdAI(Dataset):
         image_path = os.path.join(self.IMAGES_DIRECTORY, img['file_name'])
         image = io.imread(image_path)
 
-        gdf = self.prepare_annotations(img)
-        coords, gdf = get_coords_from_densifing_points(gdf, gap_distance=self.gap_distance) # [N, 2]
+        origin_gdf = self.prepare_annotations(img)
+        # coords, gdf = get_coords_from_densifing_points(origin_gdf, gap_distance=self.gap_distance, nms=self.nms) # [N, 2]
+        p_gdf = origin_gdf.copy()
+        origin_coordinates = []
+        for i, row in p_gdf.iterrows():
+            geom = row.geometry
+
+            x, y = geom.xy
+            x, y = np.array(x), np.array(y)
+            pos = np.stack([x,y], axis=1)
+            pos = np.round(pos).astype('uint16')
+            origin_coordinates.append(pos)
+        coords = np.concatenate(origin_coordinates, axis=0) # .tolist()
+
         heatmap = generate_heatmap(coords, image.shape[:2], sigma=self.sigma)
 
-        nodes, edges = gdf_to_nodes_and_edges(gdf)
+        nodes, edges = gdf_to_nodes_and_edges_linestring(origin_gdf)
         nodes = nodes / image.shape[0]
 
         image_idx = torch.tensor([idx])
+        image = resize(image, (320, 320, 3), anti_aliasing=True, preserve_range=True)
         image = torch.from_numpy(image)
+        image = image.float()
         image = image.permute(2,0,1) / 255.0
-        heatmap = torch.from_numpy(heatmap) / 255.0
-        
-        nodes = torch.tensor(nodes, dtype=torch.float)
+        heatmap = resize(heatmap, (320, 320, 1), anti_aliasing=True, preserve_range=True)
+        heatmap = torch.from_numpy(heatmap)
+        heatmap = heatmap.float()
+        heatmap = heatmap.permute(2,0,1) / 255.0
+        if len(nodes) > 256: # 정답 노드가 256개 초과인 경우
+            print("num_nodes:", len(nodes))
+        try:
+            nodes = torch.tensor(nodes, dtype=torch.float32)
+        except:
+            # print("Error! nodes:", nodes) # 노드가 0개인 에러
+            pass
         edges = torch.tensor(edges, dtype=torch.long)
 
         sample = {
@@ -189,7 +198,7 @@ class CrowdAI(Dataset):
             'image_idx': image_idx, 
             'heatmap': heatmap,
             'nodes': nodes,
-            'edges': edges
+            'edges': edges,
             }
         return sample
 
@@ -198,31 +207,43 @@ class CrowdAI(Dataset):
 
     def __getitem__(self, idx):
         sample = self.loadSample(idx)
+        number_of_nodes = len(sample['nodes']) # 1~256
+        while number_of_nodes == 0 or number_of_nodes > 256: # 0 or > 256
+        # while number_of_nodes == 0:
+            idx_new = random.randint(0, self.len-1)
+            # print("Pick new one")
+            sample = self.loadSample(idx_new)
+            number_of_nodes = len(sample['nodes'])
         return sample
 
+def build_road_coco_data(config, mode='train'):
+    if mode == 'train':
+        ds = CrowdAIRoad(
+            images_directory=config.DATA.COCO_IMAGE_DIR,
+            annotations_path=config.DATA.COCO_ANNOT_PATH,
+            gap_distance=config.DATA.GAP_DISTANCE,
+            sigma=config.DATA.SIGMA,
+            nms=config.DATA.NMS,
+        )
+    elif mode == 'test':
+        ds = CrowdAIRoad(
+            images_directory=config.DATA.TEST_COCO_IMAGE_DIR,
+            annotations_path=config.DATA.TEST_COCO_ANNOT_PATH,
+            gap_distance=config.DATA.GAP_DISTANCE,
+            sigma=config.DATA.SIGMA,
+            nms=config.DATA.NMS,
+        )
+    else:
+        raise AssertionError
+    return ds
 
-if __name__ == '__main__':
-    dataset = CrowdAI(images_directory='/nas/k8s/dev/research/doyoungi/dataset/Inria_building/cocostyle/images',
-                      annotations_path='/nas/k8s/dev/research/doyoungi/dataset/Inria_building/cocostyle/annotation.json')
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=6, collate_fn=image_graph_collate_road_network_coco)
+if __name__ == "__main__":
+    dataset = CrowdAIRoad(images_directory='/nas/k8s/dev/research/doyoungi/dataset/sat2graph/cocostyle/images',
+                    annotations_path='/nas/k8s/dev/research/doyoungi/dataset/sat2graph/cocostyle/annotation.json',
+                    gap_distance=10,
+                    sigma=0.8,
+                    nms=False)
     
-    print(next(iter(dataloader))[0].shape) # image
-
-    data = next(iter(dataloader))
-
-    image = data[0][1].detach().cpu().numpy().transpose(1,2,0)
-    heatmap =  data[1][1].detach().cpu().numpy()
-    nodes = data[2][1].detach().cpu().numpy() * image.shape[0]
-    edges = data[3][1].detach().cpu().numpy()
-
-    nodes = nodes.astype('int64')
-
-    # Visualize
-    import matplotlib.pyplot as plt
-    plt.imshow(min_max_normalize(image, 0))
-    plt.scatter(nodes[:,1], nodes[:,0], color='r')
-
-    for e in edges:
-        connect = np.stack([nodes[e[0]], nodes[e[1]]], axis=0)
-        plt.plot(connect[:,1], connect[:,0])
-    plt.show()
+    from tqdm import tqdm 
+    for i in tqdm(range(len(dataset))):
+        d = dataset[i]

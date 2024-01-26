@@ -1,8 +1,9 @@
 # Relationformer: A Unified Framework for Image-to-Graph Generation
 
 ## Requirements
-* CUDA>=9.2
-* PyTorch>=1.7.1
+
+- CUDA>=9.2
+- PyTorch>=1.7.1
 
 For other system requirements please follow
 
@@ -11,11 +12,11 @@ pip install -r requirements.txt
 ```
 
 ### Compiling CUDA operators
+
 ```bash
 cd ./models/ops
 python setup.py install
 ```
-
 
 ## Code Usage
 
@@ -30,6 +31,7 @@ code_root/
 ```
 
 After downloading the dataset run the following script to preprocess and prepare the data for training
+
 ```
 python generate_data.py
 ```
