@@ -15,7 +15,7 @@ from dataloader_cocostyle import (build_inria_coco_data,
                                   image_graph_collate_road_network_coco)
 from dataloader_cocostyle_road import build_road_coco_data
 from losses_TopDiG import SetCriterion
-from models.DGS import HungarianMatcher
+from models.DGS import Matcher
 from models.TopDiG import build_TopDiG
 from trainer_TopDiG import save_checkpoint, train_epoch, validate_epoch  # noqa
 
@@ -127,8 +127,6 @@ def main(args):
         config = yaml.load(f, Loader=yaml.FullLoader)
         print(config['log']['message'])
     config = dict2obj(config)
-    os.environ['CUDA_VISIBLE_DEVICES'] = ','.join(
-        map(str, args.cuda_visible_device))
 
     exp_path = os.path.join(
         config.TRAIN.SAVE_PATH,
@@ -194,7 +192,7 @@ def main(args):
 
     # Setting the model
     net = build_TopDiG(config)
-    matcher = HungarianMatcher()
+    matcher = Matcher(config=config, matcher=config.MODEL.MATCHER)
 
     if args.distributed:
         device = torch.device(f'cuda:{args.rank}')
