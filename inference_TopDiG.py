@@ -17,11 +17,10 @@ from sklearn.metrics import accuracy_score, f1_score, jaccard_score
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from dataloader_cocostyle import CrowdAI, image_graph_collate_road_network_coco
-from models.TopDiG import build_TopDiG
-
-from dataloader_cocostyle import build_inria_coco_data
+from dataloader_cocostyle import (build_inria_coco_data,
+                                  image_graph_collate_road_network_coco)
 from dataloader_cocostyle_road import build_road_coco_data
+from models.TopDiG import build_TopDiG
 
 
 class obj:
@@ -172,13 +171,14 @@ def parse_args():
     parser.add_argument('config', type=str, help='test config file path')
     parser.add_argument('checkpoint', type=str, help='checkpoint file')
     parser.add_argument('--show-dir', type=str, required=True, help='savedir')
-    parser.add_argument('--dataset', default='building', 
-                    help='building_dataset')
+    parser.add_argument('--dataset',
+                        default='building',
+                        help='building_dataset')
     args = parser.parse_args()
     return args
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     args = parse_args()
     config_file = args.config
     ckpt_path = args.checkpoint
@@ -190,9 +190,13 @@ if __name__ == "__main__":
 
     config = dict2obj(config)
 
-    img_dir = '/nas/tsgil/dataset/Inria_building/cocostyle_inria_test/images'
-    anno_path = '/nas/tsgil/dataset/Inria_building/cocostyle_inria_test/annotation.json'  # noqa
-    dataset = CrowdAI(images_directory=img_dir, annotations_path=anno_path)
+    # Setting the dataset
+    if args.dataset == 'road':
+        print('Loading the road dataset')
+        dataset = build_road_coco_data(config, mode='test')
+    else:
+        dataset = build_inria_coco_data(config, mode='test')
+
     val_sampler = torch.utils.data.SequentialSampler(dataset)
     val_loader = DataLoader(
         dataset,
@@ -232,7 +236,8 @@ if __name__ == "__main__":
     pixel_results = {'acc': [], 'f1': [], 'miou': [], 'building_iou': []}
     topo_results = {'acc': [], 'f1': [], 'miou': [], 'building_iou': []}
     iteration = 0
-    for idx, (images, heatmaps, nodes, edges) in enumerate(tqdm(val_loader, total=len(val_loader))):
+    for idx, (images, heatmaps, nodes,
+              edges) in enumerate(tqdm(val_loader, total=len(val_loader))):
         iteration = iteration + 1
         # if iteration == 2:
         #     break
