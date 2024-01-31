@@ -162,7 +162,7 @@ class CrowdAI(Dataset):
 
         self.len = len(self.image_ids)
 
-        self.max_points = 256  # TODO: It should be restricted the number when gt points over the max points limit # noqa
+        self.max_nodes = 512  # TODO: It should be restricted the number when gt points over the max points limit # noqa
         self.gap_distance = gap_distance
         self.sigma = sigma
         self.nms = nms
@@ -246,12 +246,16 @@ class CrowdAI(Dataset):
         heatmap = torch.from_numpy(heatmap)
         heatmap = heatmap.float()
         heatmap = heatmap.permute(2, 0, 1) / 255.0
-        # if len(nodes) > 256: # 정답 노드가 256개 초과인 경우
+
+        # if len(nodes) > self.max_nodes:
         #     print("num_nodes:", len(nodes))
+
         if len(nodes) == 0:
-            raise
-        nodes = torch.tensor(nodes, dtype=torch.float32)
-        edges = torch.tensor(edges, dtype=torch.long)
+            nodes = []
+            edges = []
+        else:
+            nodes = torch.tensor(nodes, dtype=torch.float32)
+            edges = torch.tensor(edges, dtype=torch.long)
 
         sample = {
             'image': image,
@@ -268,9 +272,8 @@ class CrowdAI(Dataset):
     def __getitem__(self, idx):
         sample = self.loadSample(idx)
         number_of_nodes = len(sample['nodes'])  # 1~256
-        while number_of_nodes == 0 or number_of_nodes > 256:  # 0 or > 256
+        while number_of_nodes == 0 or number_of_nodes > self.max_nodes:
             idx_new = random.randint(0, self.len - 1)
-            # print("Pick new one")
             sample = self.loadSample(idx_new)
             number_of_nodes = len(sample['nodes'])
         return sample

@@ -118,17 +118,24 @@ def compute_metrics(pred_nodes, pred_edges, gt_nodes, gt_edges):
 
     # Convert the GeoDataFrame to a raster array
     shapes = ((geom, 1) for geom in geo_df_pred.geometry)
-    rasterized_pred = rasterio.features.rasterize(shapes=shapes,
-                                                  out_shape=(height, width),
-                                                  transform=transform)
+    if len(geo_df_pred) == 0:
+        rasterized_pred = np.zeros((height, width))
+    else:
+        rasterized_pred = rasterio.features.rasterize(shapes=shapes,
+                                                      out_shape=(height,
+                                                                 width),
+                                                      transform=transform)
     dilated = binary_dilation(rasterized_pred, iterations=2)
     eroded = binary_erosion(rasterized_pred, iterations=2)
     rasterized_topo_pred = dilated ^ eroded
 
     shapes = ((geom, 1) for geom in geo_df_gt.geometry)
-    rasterized_gt = rasterio.features.rasterize(shapes=shapes,
-                                                out_shape=(height, width),
-                                                transform=transform)
+    if len(geo_df_gt) == 0:
+        rasterized_gt = np.zeros((height, width))
+    else:
+        rasterized_gt = rasterio.features.rasterize(shapes=shapes,
+                                                    out_shape=(height, width),
+                                                    transform=transform)
     dilated = binary_dilation(rasterized_gt, iterations=2)
     eroded = binary_erosion(rasterized_gt, iterations=2)
     rasterized_topo_gt = dilated ^ eroded
