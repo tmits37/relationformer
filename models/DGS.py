@@ -3,9 +3,45 @@
 import numpy as np
 import torch
 from scipy.optimize import linear_sum_assignment
+from scipy.sparse import csr_matrix
+from sklearn.neighbors import kneighbors_graph
 from torch import nn
 
 from models.matcher_sinkhorn import Sinkhorn
+
+
+def filter_by_distance(A, K=20):
+    A_csr = A.tocsr()
+    A_binary = A_csr.copy()
+    A_binary.data = np.where(A_binary.data <= K, 1, 0)
+
+    # Convert the binary distances to a permutation matrix
+    A_permutation = csr_matrix(
+        (A_binary.data, A_binary.indices, A_binary.indptr),
+        shape=A_binary.shape)
+    return A_permutation
+
+
+def get_adj_matrix(pred_nodes, num_link=3, distance=50, include_self=False):
+    device = pred_nodes[0].device
+    edges = []
+    adjs = []
+    for b in pred_nodes:
+        b_num_link = min(num_link, b.shape[0] - 1)
+        if b_num_link <= 0:
+            edges.append([])
+            adjs.append(torch.zeros((1, 1), device=device))
+        else:
+            A = kneighbors_graph(b.detach().cpu().numpy(),
+                                 b_num_link,
+                                 mode='distance',
+                                 include_self=include_self)
+            A_permutation = filter_by_distance(A, K=distance)
+            loc = np.array(np.where(A_permutation.toarray()))  # [2, K]
+            loc = loc.transpose(1, 0)  # [K, 2]
+            edges.append(torch.tensor(loc, device=device))
+            adjs.append(torch.tensor(A_permutation.toarray(), device=device))
+    return edges, adjs
 
 
 def edge_list_to_adj_matrix(edge_list):
@@ -49,7 +85,12 @@ def remove_vertices_and_redirect_edges(adj_matrix, vertices_to_remove):
     return adj_matrix
 
 
-def generate_adj_mask(n=256, k=170, mask_type='K-N', weight_mask=0.2):
+def generate_adj_mask(adj_matrix,
+                      pred_nodes,
+                      n=256,
+                      k=170,
+                      mask_type='K-N',
+                      weight_mask=0.2):
     mask = np.ones((n, n))
     if mask_type == 'K-N':
         mask[k:, :] = 0
@@ -57,6 +98,23 @@ def generate_adj_mask(n=256, k=170, mask_type='K-N', weight_mask=0.2):
     elif mask_type == 'diag':
         diag = np.diag(np.ones(n)) == 1
         mask[diag] = weight_mask
+    elif mask_type == 'nearest':
+        _, adjs = get_adj_matrix(pred_nodes,
+                                 num_link=5,
+                                 distance=40 / 320,
+                                 include_self=True)
+        mask = adj_matrix + adjs.detach().numpy()
+        mask[mask == 2] = 1  # union operation
+
+        # randomly convert from 0 to 1
+        zero_indices = np.where(mask == 0)
+        zero_positions = list(zip(zero_indices[0], zero_indices[1]))
+        num_zeros_to_change = min(int(256 * 256 * 0.005), len(zero_positions))
+        selected_positions = np.random.choice(range(len(zero_positions)),
+                                              size=num_zeros_to_change,
+                                              replace=False)
+        for pos in selected_positions:
+            mask[zero_positions[pos]] = 1
     else:
         raise AssertionError
     return mask
@@ -162,6 +220,11 @@ class Matcher(nn.Module):
             self.mask_type = 'None'
             self.weight_mask = 1
 
+        if config.MODEL.DATATYPE == 'road':
+            self.road_adj = True
+        else:
+            self.road_adj = False
+
     @torch.no_grad()  # 역전파 안 한다는 뜻
     def forward(self, outputs, targets):
         # outputs = {'pred_logits':..., 'pred_nodes':tensor(32, 128, 4)}
@@ -211,10 +274,16 @@ class Matcher(nn.Module):
                                        sizes,
                                        device=out_nodes.device)
         elif self.matcher == 'Nearest':
-            indices = wrapping_nearest_match_nodes(outputs['pred_nodes'],
-                                                   targets['nodes'],
-                                                   width=width,
-                                                   min_dist=12)
+            try:
+                indices = wrapping_nearest_match_nodes(outputs['pred_nodes'],
+                                                       targets['nodes'],
+                                                       width=width,
+                                                       min_dist=12)
+            except:  # noqa
+                indices = [
+                    linear_sum_assignment(c[i])
+                    for i, c in enumerate(C.split(sizes, -1))
+                ]
 
         results, masks = self.generate_directed_adjacency_matrix(
             outputs, targets, indices)
@@ -255,11 +324,27 @@ class Matcher(nn.Module):
             for e in not_in_index:
                 adj_matrix[e, e] = 1
 
+            # end_rule for road dataset
+            if self.road_adj:
+                # print('end_rule for road_dataset')
+                uniq_element, counts = np.unique(mod_edges.flatten(),
+                                                 return_counts=True)
+                element_once = uniq_element[counts == 1]
+                end_node = mod_edges[:, 1]
+                element_once_end_node = [
+                    x for x in element_once if x in end_node
+                ]
+                for e in element_once_end_node:
+                    adj_matrix[mapping[e], mapping[e]] = 1
+
             # Masking-rule
-            mask = generate_adj_mask(n=n,
-                                     k=k,
-                                     mask_type=self.mask_type,
-                                     weight_mask=self.weight_mask)
+            mask = generate_adj_mask(
+                adj_matrix=adj_matrix,
+                pred_nodes=outputs['pred_nodes'][b].unsqueeze(0),
+                n=n,
+                k=k,
+                mask_type=self.mask_type,
+                weight_mask=self.weight_mask)
             adj_matrixes.append(adj_matrix)
             mask_matrixes.append(mask)
 

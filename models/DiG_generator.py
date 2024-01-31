@@ -2,13 +2,13 @@ import torch
 import torch.nn as nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
 
-B = 8  # batch size
-N = 256  # num of nodes, n_peaks
-D = 64  # num of depth, descriptor_dim
-DD = 768  # D', dim of init and final desc
+# B = 8  # batch size
+# N = 256  # num of nodes, n_peaks
+# D = 64  # num of depth, descriptor_dim
+# DD = 768  # D', dim of init and final desc
 
-v = torch.randn(B, N, 2)  # detected nodes v; B, N, 2(x와 y 좌표)
-d = torch.randn(B, N, D)  # visual descriptor d; B, N, D(dim)
+# v = torch.randn(B, N, 2)  # detected nodes v; B, N, 2(x와 y 좌표)
+# d = torch.randn(B, N, D)  # visual descriptor d; B, N, D(dim)
 
 
 class MLP(nn.Module):
@@ -23,26 +23,19 @@ class MLP(nn.Module):
         # x의 크기: [B, N, input_dim]
         B, N, _ = x.shape
 
-        # x를 [B*N, input_dim]로 변환
         x = x.view(B * N, -1)
-
         # 첫 번째 완전 연결 층을 통과한 후 BatchNorm 적용
         x = self.fc1(x)
         x = self.bn1(x)
         x = self.relu(x)
-
-        # 두 번째 완전 연결 층을 통과
         x = self.fc2(x)
-
         # x를 원래 형태로 되돌림: [B, N, output_dim]
         x = x.view(B, N, -1)
         return x
 
 
-# 폴리 월드 구현체
 class ScoreNet(nn.Module):  # 가능한 모든 노드 페어를 계산하고 총 점수를 최대화한다
     def __init__(self, in_ch):  # 768 -> 256 -> 128 -> 64 -> 1
-        # 768 -> 3072 -> 384 -> 48 -> 1 은 어떨지 궁금
         super().__init__()
         self.relu = nn.ReLU(inplace=True)
         self.conv1 = nn.Conv2d(in_ch,
@@ -102,13 +95,10 @@ class ScoreNet(nn.Module):  # 가능한 모든 노드 페어를 계산하고 총
 class ConnectionNet(nn.Module):
     def __init__(self):
         super(ConnectionNet, self).__init__()
-        # 인코더 레이어 정의
         encoder_layer = TransformerEncoderLayer(
             d_model=768,
             nhead=12,
         )
-
-        # 인코더 정의
         self.transformer_encoder = TransformerEncoder(encoder_layer,
                                                       num_layers=2)
 
@@ -118,17 +108,15 @@ class ConnectionNet(nn.Module):
 
 
 class DiG_generator(nn.Module):
-    def __init__(self):
+    def __init__(self, descriptor_dim=64, features=768):
         super(DiG_generator, self).__init__()
         # 폴리에서 128->128과 128->64를 사용함
         # TopDiG 논문도 레이어 2개 쓴다고 함
         # 여기서는 66->256과 256->768로 설정해봄
-        self.mlp = MLP(D + 2, 256, DD)
+        self.mlp = MLP(descriptor_dim + 2, 256, features)
         self.connectionNet = ConnectionNet()
-
-        # Two parallel graph heads
-        self.graphHead1 = ScoreNet(DD * 2)
-        self.graphHead2 = ScoreNet(DD * 2)
+        self.graphHead1 = ScoreNet(features * 2)
+        self.graphHead2 = ScoreNet(features * 2)
 
     def forward(self, detected_node, visual_descriptor):
         # B, N, _ = detected_node.shape
@@ -147,13 +135,3 @@ class DiG_generator(nn.Module):
         scores_2 = self.graphHead2(d_final)  # B N N
 
         return scores_1, scores_2
-
-
-if __name__ == '__main__':
-    dig = DiG_generator()
-    dig.eval()
-    s1, s2 = dig(v, d)
-    print(s1.shape)
-    print(s1.unique())
-    print(s2.shape)
-    print(s2.unique())
