@@ -103,7 +103,7 @@ def generate_adj_mask(adj_matrix,
                                  num_link=5,
                                  distance=40 / 320,
                                  include_self=True)
-        mask = adj_matrix + adjs.detach().numpy()
+        mask = adj_matrix + adjs[0].detach().cpu().numpy()
         mask[mask == 2] = 1  # union operation
 
         # randomly convert from 0 to 1

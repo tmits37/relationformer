@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import warnings
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
@@ -21,6 +22,10 @@ from dataloader_cocostyle import (build_inria_coco_data,
                                   image_graph_collate_road_network_coco)
 from dataloader_cocostyle_road import build_road_coco_data
 from models.TopDiG import build_TopDiG
+
+warnings.filterwarnings('ignore')
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+# warnings.filterwarnings("ignore", category=UndefinedMetricWarning)
 
 
 class obj:
@@ -177,7 +182,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description='TopDiG inference model')
     parser.add_argument('config', type=str, help='test config file path')
     parser.add_argument('checkpoint', type=str, help='checkpoint file')
-    parser.add_argument('--show-dir', type=str, required=True, help='savedir')
+    parser.add_argument('--show-dir', type=str, help='savedir')
+    parser.add_argument('--visualize', action='store_true')
     parser.add_argument('--dataset',
                         default='building',
                         help='building_dataset')
@@ -256,41 +262,22 @@ if __name__ == '__main__':
             out_heatmaps = out['pred_heatmaps']
         scores = out['scores1'].sigmoid() + out['scores2'].transpose(
             1, 2).sigmoid()
-        permu = scores_to_permutations(scores)
+
+        if args.dataset == 'road':
+            permu = scores.detach().cpu() > 0.5
+        else:
+            permu = scores_to_permutations(scores)
 
         start_idx = idx * config.DATA.BATCH_SIZE
         for i in range(len(images)):
-            fig, axes = plt.subplots(2, 2, figsize=(12, 12))
 
             # 첫 번째 서브플롯 - gt_heatmap
             gt_heatmap = heatmaps[i].detach().cpu().numpy().transpose(1, 2, 0)
-            axes[0, 0].imshow(min_max_normalize(gt_heatmap, 0.5))
-            # axes[0, 0].imshow(gt_heatmap)
-            axes[0, 0].set_title('gt_heatmap')
-
-            # 두 번째 서브플롯 - gt_image
             image = images[i].detach().cpu().numpy().transpose(1, 2, 0)
-            axes[0, 1].imshow(min_max_normalize(image, 0.5))
             nodes_i = nodes[i].cpu().numpy() * image.shape[0]
             nodes_i = nodes_i.astype('int64')
-            axes[0, 1].scatter(nodes_i[:, 1], nodes_i[:, 0], color='r')
             edges_i = edges[i].cpu().numpy()
-            for e in edges_i:
-                connect = np.stack([nodes_i[e[0]], nodes_i[e[1]]], axis=0)
-                axes[0, 1].plot(connect[:, 1], connect[:, 0])
-            axes[0, 1].set_title('gt_image')
 
-            # 세 번째 서브플롯 - pred_heatmap
-            pred_heatmap = out_heatmaps[i].detach().cpu().numpy().transpose(
-                1, 2, 0)
-            axes[1, 0].imshow(min_max_normalize(pred_heatmap, 0.5))
-            axes[1, 0].set_title('pred_heatmap')
-
-            # 네 번째 서브플롯 - pred_image
-            axes[1, 1].imshow(min_max_normalize(image, 0.5))
-            axes[1, 1].scatter(out_nodes[i][:, 1],
-                               out_nodes[i][:, 0],
-                               color='g')
             mat = permu[i].numpy()
             pred_edges = []
             for j in range(len(mat)):
@@ -298,19 +285,6 @@ if __name__ == '__main__':
                     if mat[j][k] == 1:
                         if j != k:
                             pred_edges.append((j, k))
-            for x, _ in pred_edges:
-                plt.scatter(out_nodes[i][x][1], out_nodes[i][x][0], color='b')
-            for e in pred_edges:
-                connect = np.stack([out_nodes[i][e[0]], out_nodes[i][e[1]]],
-                                   axis=0)
-                plt.plot(connect[:, 1], connect[:, 0])
-                plt.annotate(
-                    '',
-                    xy=out_nodes[i][e[0]][::-1],
-                    xytext=out_nodes[i][e[1]][::-1],
-                    arrowprops=dict(arrowstyle='->', lw=1.5, color='r'),
-                )
-            axes[1, 1].set_title('pred_image')
 
             # 매트릭 계산
             acc, f1, miou, b_iou, topo_acc, topo_f1, topo_miou, topo_b_iou = (
@@ -323,12 +297,6 @@ if __name__ == '__main__':
             topo_results['f1'].append(topo_f1)
             topo_results['miou'].append(topo_miou)
             topo_results['building_iou'].append(topo_b_iou)
-            title1 = (f'PA: {acc:.3f}, F1: {f1:.3f}, '
-                      f'mIoU: {miou:.3f}, building_iou: {b_iou:.3f}\n')
-            title2 = (f'topo_PA: {topo_acc:.3f}, topo_F1: {topo_f1:.3f}, '
-                      f'topo_mIoU: {topo_miou:.3f}, '
-                      f'topo_building_iou: {topo_b_iou:.3f}')
-            plt.suptitle(title1 + title2)
             with open(metric_file, 'a') as file:
                 file.write(
                     f'{start_idx+i}.png acc: {acc}, f1: {f1}, miou: {miou}, '
@@ -336,12 +304,59 @@ if __name__ == '__main__':
                     f'topo_f1: {topo_f1}, topo_miou: {topo_miou}, '
                     f'topo_b_iou: {topo_b_iou}\n')
 
-            # 서브플롯 간 간격 조절 (선택 사항)
-            plt.tight_layout()
+            if args.visualize:
+                fig, axes = plt.subplots(2, 2, figsize=(12, 12))
+                axes[0, 0].imshow(min_max_normalize(gt_heatmap, 0.5))
+                axes[0, 0].set_title('gt_heatmap')
 
-            save_path = f'{show_dir}/{start_idx+i}.png'
-            plt.savefig(save_path)
-            plt.close()
+                # 두 번째 서브플롯 - gt_image
+                axes[0, 1].imshow(min_max_normalize(image, 0.5))
+                axes[0, 1].scatter(nodes_i[:, 1], nodes_i[:, 0], color='r')
+                for e in edges_i:
+                    connect = np.stack([nodes_i[e[0]], nodes_i[e[1]]], axis=0)
+                    axes[0, 1].plot(connect[:, 1], connect[:, 0])
+                axes[0, 1].set_title('gt_image')
+
+                # 세 번째 서브플롯 - pred_heatmap
+                pred_heatmap = out_heatmaps[i].detach().cpu().numpy(
+                ).transpose(1, 2, 0)
+                axes[1, 0].imshow(min_max_normalize(pred_heatmap, 0.5))
+                axes[1, 0].set_title('pred_heatmap')
+
+                # 네 번째 서브플롯 - pred_image
+                axes[1, 1].imshow(min_max_normalize(image, 0.5))
+                axes[1, 1].scatter(out_nodes[i][:, 1],
+                                   out_nodes[i][:, 0],
+                                   color='g')
+
+                for x, _ in pred_edges:
+                    plt.scatter(out_nodes[i][x][1],
+                                out_nodes[i][x][0],
+                                color='b')
+                for e in pred_edges:
+                    connect = np.stack(
+                        [out_nodes[i][e[0]], out_nodes[i][e[1]]], axis=0)
+                    plt.plot(connect[:, 1], connect[:, 0])
+                    plt.annotate(
+                        '',
+                        xy=out_nodes[i][e[0]][::-1],
+                        xytext=out_nodes[i][e[1]][::-1],
+                        arrowprops=dict(arrowstyle='->', lw=1.5, color='r'),
+                    )
+                axes[1, 1].set_title('pred_image')
+
+                title1 = (f'PA: {acc:.3f}, F1: {f1:.3f}, '
+                          f'mIoU: {miou:.3f}, building_iou: {b_iou:.3f}\n')
+                title2 = (f'topo_PA: {topo_acc:.3f}, topo_F1: {topo_f1:.3f}, '
+                          f'topo_mIoU: {topo_miou:.3f}, '
+                          f'topo_building_iou: {topo_b_iou:.3f}')
+                plt.suptitle(title1 + title2)
+                plt.tight_layout()
+
+                save_path = f'{show_dir}/{start_idx+i}.png'
+                plt.savefig(save_path)
+                plt.close()
+
     with open(metric_file, 'a') as file:
         file.write('\nTotal average metrics\n')
         for key, result in pixel_results.items():

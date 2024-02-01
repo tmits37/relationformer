@@ -157,17 +157,17 @@ def main(args):
     if args.dataset == 'road':
         print('Loading the road dataset')
         train_ds = build_road_coco_data(config, mode='train')
-        # val_ds = build_road_coco_data(config, mode='test')
+        val_ds = build_road_coco_data(config, mode='test')
     else:
         train_ds = build_inria_coco_data(config, mode='train')
-        # val_ds = build_inria_coco_data(config, mode='test')
+        val_ds = build_inria_coco_data(config, mode='test')
 
     if args.distributed:
         train_sampler = DistributedSampler(train_ds, shuffle=True)
-        # val_sampler = DistributedSampler(val_ds, shuffle=False)
+        val_sampler = DistributedSampler(val_ds, shuffle=False)
     else:
         train_sampler = torch.utils.data.RandomSampler(train_ds)
-        # val_sampler = torch.utils.data.SequentialSampler(val_ds)
+        val_sampler = torch.utils.data.SequentialSampler(val_ds)
 
     train_loader = DataLoader(
         train_ds,
@@ -179,16 +179,14 @@ def main(args):
         drop_last=True,
     )
 
-    # val_loader = DataLoader(
-    #     val_ds,
-    #     batch_size=int(config.DATA.BATCH_SIZE / args.world_size),
-    #     num_workers=int(config.DATA.NUM_WORKERS / args.world_size),
-    #     sampler=val_sampler,
-    #     collate_fn=image_graph_collate_road_network_coco,
-    #     pin_memory=True,
-    #     drop_last=True # False면 마지막 에폭에서 아래 에러 발생
-    #     # RuntimeError: Sizes of tensors must match except in dimension 2.
-    #     )
+    val_loader = DataLoader(
+        val_ds,
+        batch_size=int(config.DATA.BATCH_SIZE / args.world_size),
+        num_workers=int(config.DATA.NUM_WORKERS / args.world_size),
+        sampler=val_sampler,
+        collate_fn=image_graph_collate_road_network_coco,
+        pin_memory=True,
+        drop_last=True)
 
     # Setting the model
     net = build_TopDiG(config)
@@ -292,16 +290,15 @@ def main(args):
 
         if is_master and (epoch % config.TRAIN.VAL_INTERVAL == 0):
             save_checkpoint(net, optimizer, scheduler, epoch, config)
-            # validate_epoch(
-            #     net,
-            #     config=config,
-            #     data_loader=val_loader,
-            #     loss_fn=loss,
-            #     device=device,
-            #     epoch=epoch,
-            #     val_interval=config.TRAIN.VAL_INTERVAL,
-            #     writer=writer,
-            #     is_master=is_master)
+            validate_epoch(net,
+                           config=config,
+                           data_loader=val_loader,
+                           loss_fn=loss,
+                           device=device,
+                           epoch=epoch,
+                           val_interval=config.TRAIN.VAL_INTERVAL,
+                           writer=writer,
+                           is_master=is_master)
 
     if is_master and writer:
         writer.close()
