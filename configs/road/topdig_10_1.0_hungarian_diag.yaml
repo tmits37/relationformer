@@ -1,0 +1,46 @@
+DATA:
+  BATCH_SIZE: 16
+  DATASET: 'Inria'     # Dataset name
+  COCO_IMAGE_DIR: '/nas/k8s/dev/research/doyoungi/dataset/sat2graph/cocostyle/images'
+  COCO_ANNOT_PATH: '/nas/k8s/dev/research/doyoungi/dataset/sat2graph/cocostyle/annotation.json'
+  TEST_COCO_IMAGE_DIR: '/nas/k8s/dev/research/doyoungi/dataset/sat2graph/cocostyle_test/images'
+  TEST_COCO_ANNOT_PATH: '/nas/k8s/dev/research/doyoungi/dataset/sat2graph/cocostyle_test/annotation.json'
+  GAP_DISTANCE: 10
+  SIGMA: 1.0
+  NMS: True
+
+  BACKBONE_PATH: '/nas/k8s/dev/research/doyoungi/git/topdig2/relationformer/work_dirs/road/R2U_Net_pretrain/runs/baseline_R2U_Net_pretrain_epoch200_5e-6_10_1.0_inworkspace_10/models/epochs_60.pth'
+  BACKBONE_CONFIG_PATH: '/nas/k8s/dev/research/doyoungi/git/topdig2/work_dirs/road/R2U_Net_pretrain/runs/baseline_R2U_Net_pretrain_epoch200_5e-6_10_1.0_inworkspace_10/config.yaml'
+  IMG_SIZE: [300, 300]    # Input image size resized [320, 320]
+  NUM_WORKERS: 16          # Number of data loading threads
+  SEED: 10                # random seed for reproducibility
+
+MODEL:
+  # 매쳐 종류 ['Hungarian', 'Sinkhorn', 'Nearest']
+  MATCHER: 'Hungarian'
+  DATATYPE: 'road'
+
+  # 마스크 종류 ['None', 'K-N', 'diag']
+  ADJ_MAT_MASK: 'diag'
+  W_MASK: 0.2 # diag일 때 사용함
+
+TRAIN:
+  EPOCHS: &epoch 20
+  LR: 1e-4 # L_graph
+  LR_BACKBONE: 1e-6 # L_node
+  WEIGHT_DECAY: 1e-5
+  LR_DROP: *epoch
+
+  SAVE_PATH: "./work_dirs/road/TopDiG_train"  # save path for the checkpoint, log and val results
+  VAL_INTERVAL: 5                    # validation interval
+  SAVE_VAL: False                         # save validation data
+
+  # loss weight
+  # the loss functions specific weights referred by relationformer
+  LOSSES: ['node', 'graph1', 'graph2']
+  W_NODE: 10.0 # 조정 가능, loss_fn 안에서는 따로 또 가중치 있음.
+  W_GRAPH: 1.0 # 폴리월드 논문과 동일하게 1
+
+log:
+  exp_name: 'baseline_TopDiG_train_epoch20_topdig_10_1.0_hungarian_diag'
+  message: "Baseline TopDig for Inria dataset"
