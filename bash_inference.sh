@@ -17,4 +17,4 @@ DATASET=$5
 # cd ../../
 
 python3 inference.py $CONFIG $CHECKPOINT --show-dir $SHOW_DIR
-python3 scene_inference.py --show-dir $SHOW_DIR --dataset $DATASET --patch-size $PATCH_SIZE
+python3 scene_inference.py --show-dir $SHOW_DIR --dataset $DATASET --patch-size $PATCH_SIZE ${@:6}

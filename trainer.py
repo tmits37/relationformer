@@ -14,7 +14,6 @@ def train_epoch(model,
 
     model.train()
 
-
     total_loss = 0
     with tqdm(data_loader, unit="batch") as tepoch:
         max_iter_in_epoch = len(tepoch)
@@ -43,24 +42,21 @@ def train_epoch(model,
             loss.backward()
             optimizer.step()
 
+            loss_keys = list(losses.keys())
+            loss_keys.remove('total')
+
             total_loss += loss.item()
             if is_master:
                 iters = int(max_iter_in_epoch * (epoch - 1) + idx)
                 writer.add_scalar('Train/Loss', loss.item() / len(images), iters)
-                writer.add_scalar('Train/Loss/class', losses['class'].item() / len(images), iters)
-                writer.add_scalar('Train/Loss/nodes', losses['nodes'].item() / len(images), iters)
-                writer.add_scalar('Train/Loss/boxes', losses['boxes'].item() / len(images), iters)
+                for loss_id in loss_keys:
+                    writer.add_scalar(f'Train/Loss/{loss_id}', losses[f'{loss_id}'].item() / len(images), iters)
 
-                # writer.add_scalar('Train/Loss/edges', losses['edges'].item(), iters)
-
-                if loss_fn.seg:
-                    writer.add_scalar('Train/Loss/segs', losses['segs'].item() / len(images), iters)
-
-                if loss_fn.two_stage:
-                    for i, l in enumerate(['class', 'boxes', 'cards', 'nodes']):
-                        writer.add_scalar(f'Train/Loss/enc/{l}', losses[f'{l}_enc'].item() / len(images), iters)
-                        for j in range(3):
-                            writer.add_scalar(f'Train/Loss/aux/{j}/{l}', losses[f'{l}_aux_{j}'].item() / len(images), iters)
+                # if loss_fn.two_stage:
+                #     for i, l in enumerate(['class', 'boxes', 'cards', 'nodes']):
+                #         writer.add_scalar(f'Train/Loss/enc/{l}', losses[f'{l}_enc'].item() / len(images), iters)
+                #         for j in range(3):
+                #             writer.add_scalar(f'Train/Loss/aux/{j}/{l}', losses[f'{l}_aux_{j}'].item() / len(images), iters)
 
             # for name, param in model.aux_fpn_head.named_parameters():
             #     if param.requires_grad:
@@ -83,7 +79,7 @@ def validate_epoch(
     writer, 
     is_master):
 
-    model.eval()
+    model.train()
 
     total_loss = 0
     with tqdm(data_loader, unit="batch") as tepoch:
@@ -103,30 +99,35 @@ def validate_epoch(
             targets['boxes'] = [torch.cat([x, wh.repeat(len(x), 1)], dim=-1) for x in targets['nodes']]
             targets_converted = [{key: value for key, value in zip(targets.keys(), values)} for values in zip(*targets.values())]
 
-            h, out, srcs = model(images, targets=targets_converted)
+            with torch.no_grad():
+                h, out, srcs = model(images, targets=targets_converted)
 
             losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges, 'segs':seg})
             loss = losses['total']
             total_loss += loss.item()
 
+            loss_keys = list(losses.keys())
+            loss_keys.remove('total')
             if is_master:
                 iters = int(max_iter_in_epoch * (epoch - 1) / val_interval + idx)
                 writer.add_scalar('Val/Loss', loss.item() / len(images), iters)
-                writer.add_scalar('Val/Loss/class', losses['class'].item() / len(images), iters)
-                writer.add_scalar('Val/Loss/nodes', losses['nodes'].item() / len(images), iters)
-                writer.add_scalar('Val/Loss/boxes', losses['boxes'].item() / len(images), iters)
+                for loss_id in loss_keys:
+                    writer.add_scalar(f'Val/Loss/{loss_id}', losses[f'{loss_id}'].item() / len(images), iters)
+                # writer.add_scalar('Val/Loss/class', losses['class'].item() / len(images), iters)
+                # writer.add_scalar('Val/Loss/nodes', losses['nodes'].item() / len(images), iters)
+                # writer.add_scalar('Val/Loss/boxes', losses['boxes'].item() / len(images), iters)
 
-                if config.MODEL.DECODER.RLN_TOKEN > 0:
-                    writer.add_scalar('Val/Loss/edges', losses['edges'].item() / len(images), iters)
+                # if config.MODEL.DECODER.RLN_TOKEN > 0:
+                #     writer.add_scalar('Val/Loss/edges', losses['edges'].item() / len(images), iters)
 
-                if loss_fn.seg:
-                    writer.add_scalar('Val/Loss/segs', losses['segs'].item() / len(images), iters)
+                # if loss_fn.seg:
+                #     writer.add_scalar('Val/Loss/segs', losses['segs'].item() / len(images), iters)
 
-                if loss_fn.two_stage:
-                    for i, l in enumerate(['class', 'boxes', 'cards', 'nodes']):
-                        writer.add_scalar(f'Val/Loss/enc/{l}', losses[f'{l}_enc'].item() / len(images), iters)
-                        for j in range(3):
-                            writer.add_scalar(f'Val/Loss/aux/{j}/{l}', losses[f'{l}_aux_{j}'].item() / len(images), iters)
+                # if loss_fn.two_stage:
+                #     for i, l in enumerate(['class', 'boxes', 'cards', 'nodes']):
+                #         writer.add_scalar(f'Val/Loss/enc/{l}', losses[f'{l}_enc'].item() / len(images), iters)
+                #         for j in range(3):
+                #             writer.add_scalar(f'Val/Loss/aux/{j}/{l}', losses[f'{l}_aux_{j}'].item() / len(images), iters)
 
             tepoch.set_postfix(loss=loss.item() / len(images))
 
