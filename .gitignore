@@ -7,3 +7,6 @@
 *resources
 *trained_weights
 *models/ops/*
+work_dirs/
+show_dirs/
+data/

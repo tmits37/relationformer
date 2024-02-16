@@ -1,11 +1,9 @@
 import torch
 import torch.nn.functional as F
 from torch import nn
-import box_ops_2D
+from .box_ops_2D import box_cxcywh_to_xyxy, generalized_box_iou
 import numpy as np
 import copy
-
-from mmseg.models import build_loss
 
 
 def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
@@ -197,9 +195,9 @@ class SetCriterion(nn.Module):
         target_boxes = torch.cat([t[i] for t, (_, i) in zip(targets, indices)], dim=0)
         target_boxes = torch.cat([target_boxes, 0.15*torch.ones(target_boxes.shape, device=target_boxes.device)], dim=-1)
 
-        loss = 1 - torch.diag(box_ops_2D.generalized_box_iou(
-            box_ops_2D.box_cxcywh_to_xyxy(src_boxes),
-            box_ops_2D.box_cxcywh_to_xyxy(target_boxes)))
+        loss = 1 - torch.diag(generalized_box_iou(
+            box_cxcywh_to_xyxy(src_boxes),
+            box_cxcywh_to_xyxy(target_boxes)))
         loss = loss.sum() / num_boxes
         return loss
 

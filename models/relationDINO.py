@@ -17,7 +17,7 @@ from .deformable_transformer_dino import DeformableTransformer
 from .utils import nested_tensor_from_tensor_list, NestedTensor, inverse_sigmoid
 
 from .fcn_head import NestedFCNHead
-from .dn_componenets import prepare_for_cdn, dn_post_process
+from .dn_components import prepare_for_cdn, dn_post_process
 
 
 class RelationEmbed(nn.Module):

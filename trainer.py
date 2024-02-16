@@ -1,10 +1,6 @@
 import os
 from tqdm import tqdm
-
 import torch
-
-from inference import relation_infer
-
 
 def train_epoch(model,
                 data_loader, 

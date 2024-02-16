@@ -6,7 +6,7 @@ import argparse
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from dataset_road_network import build_road_network_data
+from datasets.dataset_road_network import build_road_network_data
 from models import build_model, build_relationformer_dino
 from models.relationformer_2D import build_relation_embed
 from utils import image_graph_collate_road_network
