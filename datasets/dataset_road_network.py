@@ -5,9 +5,72 @@ import random
 import imageio
 import torch
 import pyvista
+from shapely.geometry import LineString
+import geopandas as gpd
+from collections import Counter
 from torch.utils.data import Dataset
 import torchvision.transforms.functional as tvf
-from albumentation_aug import AlbumentationsAugmentation
+from .albumentation_aug import AlbumentationsAugmentation
+from .directedgraph_builder import generate_directed_graph_and_sorting, gdf_to_nodes_and_edges_linestring
+
+
+def get_pts_gnn_classes(node, edge):
+    node_counter = Counter()
+    # Count each occurrence of nodes in the edge array
+    for e in edge.flatten():
+        node_counter[e] += 1
+    # Identify terminal nodes (nodes that appear only once)
+    terminal_nodes = [n for n, count in node_counter.items() if count == 1]
+
+    classes = np.zeros(node.shape[0])
+    classes[terminal_nodes] = 1
+    return classes
+
+
+def is_point_on_boundary(point, img_shape, boundary_width=10):
+    h, w = img_shape
+    x, y = point
+
+    if x <= boundary_width:
+        return True
+
+    if x >= w - boundary_width:
+        return True
+
+    if y <= boundary_width:
+        return True
+
+    if y >= h - boundary_width:
+        return True
+    return False
+
+
+def get_pts_classes(lines, coordinates, img_shape, boundary_ratio=0.10):
+    img_shape = img_shape[:2]
+    boundary_width = int(img_shape[0] * boundary_ratio)
+
+    unique, counts = np.unique(lines, return_counts=True)
+    counts_dict = dict(zip(unique, counts))
+    intersection_index = [int(k) for k, v in counts_dict.items() if int(v) > 2]
+
+    end_index_candidate = [int(k) for k, v in counts_dict.items() if int(v) == 1]
+    end_index_candidate_coords = [coordinates[x] for x in end_index_candidate]
+
+    is_pts_on_boundary = [is_point_on_boundary(x, img_shape, boundary_width) for x in end_index_candidate_coords]
+    end_index = [x for i, x in enumerate(end_index_candidate) if is_pts_on_boundary[i] == True]
+
+    pts_class = np.zeros(len(coordinates), dtype=np.int64)
+
+    for pt_id in intersection_index:
+        pts_class[pt_id] = 1
+    for pt_id in end_index:
+        pts_class[pt_id] = 2
+
+    # removal end_index
+    # pts_class[pts_class == 3] = 1
+    # pts_class[pts_class == 2] = 1 
+    
+    return pts_class
 
 
 class Sat2GraphDataLoader(Dataset):
@@ -71,10 +134,33 @@ class Sat2GraphDataLoader(Dataset):
             mean=self.mean, 
             std=self.std)
         
-        coordinates = torch.tensor(np.float32(np.asarray(vtk_data.points)), dtype=torch.float)
-        lines = torch.tensor(np.asarray(vtk_data.lines.reshape(-1, 3)), dtype=torch.int64)
+        coordinates = np.float32(np.asarray(vtk_data.points))[:, :2]
+        lines = np.asarray(vtk_data.lines.reshape(-1, 3))[:, 1:]
 
-        return image_data, seg_data, coordinates[:,:2], lines[:,1:]
+        # Re-indexing the coordinates and edges order
+        coord_lines = []
+        for l in lines:
+            coord_lines.append(LineString([coordinates[l[0]], coordinates[l[1]]]))
+        gdf = gpd.GeoDataFrame(geometry=coord_lines)
+        p_gdf = generate_directed_graph_and_sorting(gdf)
+        nodes, edges = gdf_to_nodes_and_edges_linestring(p_gdf)
+        nodes = np.float32(nodes[:,::-1])
+        edges = np.array(edges)
+
+        # coordinates = torch.tensor(coordinates, dtype=torch.float)
+        # lines = torch.tensor(lines, dtype=torch.int64)
+        coordinates = torch.tensor(nodes, dtype=torch.float)
+        lines = torch.tensor(edges, dtype=torch.int64)
+        
+        # pts_labels
+        # coords_pts = np.round(np.float32(np.asarray(vtk_data.points))[:,:2] * image_data.shape[1]).astype('int64')
+        # pts_labels = get_pts_classes(
+        #     np.asarray(vtk_data.lines.reshape(-1, 3))[:,1:], 
+        #     coords_pts, image_data.shape[1:], boundary_ratio=0.075)
+        pts_labels = get_pts_gnn_classes(nodes, edges)
+        pts_labels = torch.tensor(pts_labels, dtype=torch.int64)
+
+        return image_data, seg_data, coordinates, lines, pts_labels
 
 
 def build_road_network_data(config, mode="train", split=0.95, loadXYN=False):
