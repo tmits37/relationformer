@@ -1,5 +1,4 @@
 import torch.nn as nn
-from mmseg.models.decode_heads import FCNHead
 from mmseg.ops import resize
 from mmcv.cnn import ConvModule
 

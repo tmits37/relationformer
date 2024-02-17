@@ -1,11 +1,7 @@
-import torch
-import torch.nn.functional as F
 from torch import nn
-from copy import deepcopy
 
 from .deformable_detr_backbone import build_backbone
-from .relationDINO import RelationFormerDINO, build_relationformer_dino, build_deformable_transformer_dino
-# from utils import scores_to_permutations, permutations_to_polygons
+from .relationDINO import RelationFormerDINO, build_deformable_transformer_dino
 
 
 class RelationFormerDINOmulti(RelationFormerDINO):

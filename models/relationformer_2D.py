@@ -14,7 +14,7 @@ from .deformable_detr_backbone import build_backbone
 from .deformable_detr_2D import build_deforamble_transformer
 from .utils import nested_tensor_from_tensor_list, NestedTensor, inverse_sigmoid
 
-from .fcn_head import NestedFCNHead
+# from .fcn_head import NestedFCNHead
 
 
 class RelationEmbed(nn.Module):
@@ -140,9 +140,9 @@ class RelationFormer(nn.Module):
             for box_embed in self.bbox_embed:
                 nn.init.constant_(box_embed.layers[-1].bias.data[2:], 0.0)
 
-        self.seg = config.MODEL.SEG
-        if self.seg:
-            self.aux_fpn_head = NestedFCNHead(origin_shape=config.DATA.IMG_SIZE)
+        # self.seg = config.MODEL.SEG
+        # if self.seg:
+        #     self.aux_fpn_head = NestedFCNHead(origin_shape=config.DATA.IMG_SIZE)
 
         self.edge_descriptors = config.MODEL.EDGE_DESCRIPTORS
         if self.edge_descriptors:

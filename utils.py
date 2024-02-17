@@ -24,7 +24,9 @@ def image_graph_collate_road_network(batch):
     seg = torch.stack([item[1] for item in batch], 0).contiguous()
     points = [item[2] for item in batch]
     edges = [item[3] for item in batch]
-    return [images, seg, points, edges]
+    pts_labels = [item[4] for item in batch]
+
+    return [images, seg, points, edges, pts_labels]
 
 
 def save_input(path, idx, patch, patch_coord, patch_edge):

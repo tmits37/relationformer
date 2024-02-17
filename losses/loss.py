@@ -76,6 +76,7 @@ class SetCriterion(nn.Module):
         self.losses = config.TRAIN.LOSSES
         self.seg = config.MODEL.SEG
         self.two_stage = config.MODEL.DECODER.TWO_STAGE
+        self.multi_class = config.TRAIN.MULTI_CLASS
 
         self.weight_dict = {'boxes':config.TRAIN.W_BBOX,
                             'class':config.TRAIN.W_CLASS,
@@ -112,6 +113,10 @@ class SetCriterion(nn.Module):
 
             print("You WILL calculate additional two-stage loss")
             print(self.weight_dict)
+
+        if self.multi_class:
+            print("You WILL calculate multi loss")
+            self.weight_dict['multi_class'] = 3.0
 
         self.edge_descriptors = config.MODEL.EDGE_DESCRIPTORS
         if self.edge_descriptors:
@@ -305,6 +310,17 @@ class SetCriterion(nn.Module):
         loss = F.cross_entropy(relation_pred, edge_labels, reduction='mean')
         return loss
 
+    def loss_multiclass(self, outputs, targets, indices):
+        targets = targets['pts_labels']
+        outputs = outputs['pts_pred_class']
+
+        idx = self._get_src_permutation_idx(indices)
+        pred_nodes = outputs[idx]
+        target_nodes = torch.cat([t[i] for t, (_, i) in zip(targets, indices)], dim=0)
+        
+        loss = F.cross_entropy(pred_nodes, target_nodes, reduction='mean')
+
+        return loss
 
     def _get_src_permutation_idx(self, indices):
         # permute predictions following indices
@@ -363,6 +379,9 @@ class SetCriterion(nn.Module):
                 losses[f'boxes_aux_{i}'] = self.loss_boxes(aux_outputs['pred_nodes'], target['nodes'], indices)
                 losses[f'cards_aux_{i}'] = self.loss_cardinality(aux_outputs['pred_logits'], indices)
                 losses[f'nodes_aux_{i}'] = self.loss_nodes(aux_outputs['pred_nodes'][...,:2], target['nodes'], indices)
+
+        if 'pts_pred_class' in out:
+            losses['multi_class'] = self.loss_multiclass(out, target, indices)
 
         losses['total'] = sum([losses[key]*self.weight_dict[key] for key in self.losses])
 

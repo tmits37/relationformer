@@ -4,11 +4,10 @@ import json
 import argparse
 
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
 from datasets.dataset_road_network import build_road_network_data
-from models import build_model, build_relationformer_dino
-from models.relationformer_2D import build_relation_embed
+from models import (build_model, build_relationformer_dino, 
+                    build_relationformer_dino_multi)
 from utils import image_graph_collate_road_network
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.distributed import DistributedSampler
@@ -29,7 +28,7 @@ def parse_args():
                         help='config file (.yml) containing the hyper-parameters for training. '
                             'If None, use the nnU-Net config. See /config for examples.')
     parser.add_argument('--resume', default=None, help='checkpoint of the last epoch of the model')
-    # parser.add_argument('--seg_net', default=None, help='checkpoint of the segmentation model')
+    parser.add_argument('--load-from', default=None, help='checkpoint of the last epoch of the model')
     parser.add_argument('--device', default='cuda',
                             help='device to use for training')
     parser.add_argument('--cuda_visible_device', nargs='*', type=int, default=[0,1],
@@ -145,7 +144,6 @@ def main(args):
     torch.backends.cudnn.enabled = True
     torch.multiprocessing.set_start_method('spawn')
     torch.multiprocessing.set_sharing_strategy('file_descriptor') # This is the default settings
-    # device = torch.device("cuda") if args.device=='cuda' else torch.device("cpu")
 
     # gpu 2개 사용할 경우, world_size = 2, rank = 0 and 1 으로 두번 실행되는것을 관찰할 수 있다.
     init_for_distributed(args)
@@ -154,11 +152,6 @@ def main(args):
     print(args.rank, args.local_rank)
 
     device = torch.device(args.device)
-    # if args.distributed:
-    #     args.rank = torch.distributed.get_rank()
-    #     device = torch.device(f"cuda:{args.rank}")
-    #     print(args.rank, device, args.local_rank) # 0, cuda:0, 0
-
 
     ### Setting the dataset
     train_ds, val_ds = build_road_network_data(config, mode='split')
@@ -190,35 +183,16 @@ def main(args):
         pin_memory=True
         )
 
-
     ### Setting the model
     if config.MODEL.DECODER.TWO_STAGE_TYPE == "dino":
         print("Relationformer DINO")
         net = build_relationformer_dino(config)
+    elif config.MODEL.DECODER.TWO_STAGE_TYPE == 'dino_multi':
+        print("Relationformer DINO multi")
+        net = build_relationformer_dino_multi(config)
     else:
-        net = build_model(config) # .to(device)
+        net = build_model(config)
     matcher = build_matcher(config)
-    # relation_embed = build_relation_embed(config)
-
-    if args.distributed:
-        device = torch.device(f"cuda:{args.rank}")
-
-        net = DistributedDataParallel(net.cuda(args.local_rank), 
-                                      device_ids=[args.local_rank],
-                                      broadcast_buffers=False,
-                                      find_unused_parameters=True
-                                      )
-    else:
-        net = net.to(device)
-        matcher = matcher.to(device)
-
-    if args.distributed:
-        relation_embed = net.module.relation_embed
-    else:
-        relation_embed = net.relation_embed
-
-    loss = SetCriterion(config, matcher, net, distributed=args.distributed).cuda(args.local_rank)
-
 
     ### Setting optimizer
     # decoder.decoder.layers.0.cross_attn_sampling_offsets
@@ -244,7 +218,7 @@ def main(args):
     )
 
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, config.TRAIN.LR_DROP)
-    
+
     if args.resume:
         checkpoint = torch.load(args.resume, map_location='cpu')
         net.load_state_dict(checkpoint['net'])
@@ -253,6 +227,34 @@ def main(args):
         last_epoch = scheduler.last_epoch
         scheduler.step_size = config.TRAIN.LR_DROP
 
+    if args.load_from:
+        checkpoint = torch.load(args.load_from, map_location='cpu')
+        net.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        checkpoint_keys = list(checkpoint['model_state_dict'].keys())
+
+        non_freeze_layers = []
+        for name, param in net.named_parameters():
+            if name in checkpoint_keys:
+                param.requires_grad = False
+            else:
+                non_freeze_layers.append(name)
+        print(non_freeze_layers)
+
+        checkpoint = None
+
+    if args.distributed:
+        device = torch.device(f"cuda:{args.rank}")
+
+        net = DistributedDataParallel(net.cuda(args.local_rank), 
+                                      device_ids=[args.local_rank],
+                                      broadcast_buffers=False,
+                                      find_unused_parameters=True
+                                      )
+    else:
+        net = net.to(device)
+        matcher = matcher.to(device)
+
+    loss = SetCriterion(config, matcher, net, distributed=args.distributed).cuda(args.local_rank)
 
     print("Check local rank or not")
     print("=======================")
@@ -283,6 +285,12 @@ def main(args):
             print(f"Epoch {epoch}, Training Loss: {train_loss}")
 
         if is_master and (epoch % config.TRAIN.VAL_INTERVAL == 0):
+            save_checkpoint(
+                net, 
+                optimizer,
+                epoch, 
+                config)
+
             validate_epoch(
                 net, 
                 config,
@@ -293,11 +301,6 @@ def main(args):
                 val_interval=config.TRAIN.VAL_INTERVAL,
                 writer=writer, 
                 is_master=is_master)
-            save_checkpoint(
-                net, 
-                optimizer,
-                epoch, 
-                config)
 
     if is_master and writer:
         writer.close()

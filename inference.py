@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import torch
 import networkx as nx
-from dataset_road_network import build_road_network_data
+from datasets.dataset_road_network import build_road_network_data
 from models import build_model, build_relationformer_dino
 from utils import image_graph_collate_road_network
 from PIL import Image

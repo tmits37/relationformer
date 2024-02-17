@@ -15,8 +15,6 @@ from .deformable_detr_2D import build_deforamble_transformer
 from .deformable_transformer_dino import DeformableTransformer
 
 from .utils import nested_tensor_from_tensor_list, NestedTensor, inverse_sigmoid
-
-from .fcn_head import NestedFCNHead
 from .dn_components import prepare_for_cdn, dn_post_process
 
 
@@ -63,13 +61,14 @@ class RelationFormerDINO(nn.Module):
             # self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*2, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
             self.relation_embed = None
 
-        if (self.two_stage == True) and (self.config.MODEL.DECODER.TWO_STAGE_TYPE == 'dino'):
-            self.label_enc = nn.Embedding(self.num_classes + 1, self.hidden_dim)
-            self.query_embed = nn.Embedding(self.num_queries, self.hidden_dim)
-        elif self.two_stage:
-            self.query_embed = nn.Embedding(self.num_queries, self.hidden_dim*2)    # why *2
-        else:
-            self.query_embed = nn.Embedding(config.MODEL.DECODER.RLN_TOKEN, self.hidden_dim*2)
+        #  I always use self.two_stage == True
+        # if (self.two_stage == True) and (self.config.MODEL.DECODER.TWO_STAGE_TYPE == 'dino'):
+        self.label_enc = nn.Embedding(self.num_classes + 1, self.hidden_dim)
+        self.query_embed = nn.Embedding(self.num_queries, self.hidden_dim)
+        # elif self.two_stage:
+        #     self.query_embed = nn.Embedding(self.num_queries, self.hidden_dim*2)    # why *2
+        # else:
+        #     self.query_embed = nn.Embedding(config.MODEL.DECODER.RLN_TOKEN, self.hidden_dim*2)
 
         if self.num_feature_levels > 1:
             num_backbone_outs = len(self.encoder.strides)
@@ -211,23 +210,23 @@ class RelationFormerDINO(nn.Module):
                 pos.append(pos_l)
 
 
-        if self.config.MODEL.DECODER.TWO_STAGE_TYPE == 'dino':
+        # if self.config.MODEL.DECODER.TWO_STAGE_TYPE == 'dino':
             # dn_args = (targets, self.dn_number, self.dn_label_noise_ratio, self.dn_box_noise_scale)
             # Always using CDN
             # default self.dn_number=100
             # When inferencing, input_query_bbox = input_query_label = attn_mask = dn_meta = None
             """
-                input_query_label: [B, \max(nodes) * 2, D]
-                input_query_bbox: [B, \max(nodes) * 2, 4]
-                attn_mask: [\max(nodes)+num_queries, \max(nodes)+num_queries]
-                이로인해 Batch 별로 shape of input_query_bbox는 바뀔 수 있다.
-            """
-            input_query_label, input_query_bbox, attn_mask, dn_meta =\
-                prepare_for_cdn(dn_args=(targets, 100, 0.4, 0.5),
-                                training=seg, num_queries=self.config.MODEL.DECODER.OBJ_TOKEN, num_classes=self.num_classes,
-                                hidden_dim=self.hidden_dim, label_enc=self.label_enc)
-        else:
-            input_query_label, input_query_bbox, attn_mask, dn_meta = None
+            input_query_label: [B, \max(nodes) * 2, D]
+            input_query_bbox: [B, \max(nodes) * 2, 4]
+            attn_mask: [\max(nodes)+num_queries, \max(nodes)+num_queries]
+            이로인해 Batch 별로 shape of input_query_bbox는 바뀔 수 있다.
+        """
+        input_query_label, input_query_bbox, attn_mask, dn_meta =\
+            prepare_for_cdn(dn_args=(targets, 100, 0.4, 0.5),
+                            training=seg, num_queries=self.config.MODEL.DECODER.OBJ_TOKEN, num_classes=self.num_classes,
+                            hidden_dim=self.hidden_dim, label_enc=self.label_enc)
+        # else:
+            # input_query_label, input_query_bbox, attn_mask, dn_meta = None
 
         hs, reference, hs_enc, ref_enc, init_box_proposal = self.transformer(srcs, masks, input_query_bbox, pos, input_query_label,attn_mask)
         # In case num object=0

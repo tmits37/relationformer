@@ -19,16 +19,17 @@ def train_epoch(model,
         max_iter_in_epoch = len(tepoch)
         for idx, batch in enumerate(tepoch):
             tepoch.set_description(f"Epoch {epoch}")
-            images, seg, nodes, edges = batch
+            images, seg, nodes, edges, pts_labels = batch
 
             images = images.to(device)
             seg = seg.to(device)
             nodes = [node.to(device) for node in nodes]
             edges = [edge.to(device) for edge in edges]
+            pts_labels = [pts_label.to(device) for pts_label in pts_labels]
 
             optimizer.zero_grad()
 
-            targets = {'nodes': nodes, 'edges': edges, 'segs':seg}
+            targets = {'nodes': nodes, 'edges': edges, 'segs':seg, 'pts_labels':pts_labels}
             wh = torch.ones(1,2).to(device) * 0.05
             targets['labels'] = [torch.zeros(len(x)).long().to(device) for x in targets['nodes']]
             targets['boxes'] = [torch.cat([x, wh.repeat(len(x), 1)], dim=-1) for x in targets['nodes']]
@@ -36,7 +37,7 @@ def train_epoch(model,
 
             h, out, srcs = model(images, targets=targets_converted)
 
-            losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges, 'segs':seg})
+            losses = loss_fn(h, out, targets)
             loss = losses['total']
 
             loss.backward()
@@ -51,12 +52,6 @@ def train_epoch(model,
                 writer.add_scalar('Train/Loss', loss.item() / len(images), iters)
                 for loss_id in loss_keys:
                     writer.add_scalar(f'Train/Loss/{loss_id}', losses[f'{loss_id}'].item() / len(images), iters)
-
-                # if loss_fn.two_stage:
-                #     for i, l in enumerate(['class', 'boxes', 'cards', 'nodes']):
-                #         writer.add_scalar(f'Train/Loss/enc/{l}', losses[f'{l}_enc'].item() / len(images), iters)
-                #         for j in range(3):
-                #             writer.add_scalar(f'Train/Loss/aux/{j}/{l}', losses[f'{l}_aux_{j}'].item() / len(images), iters)
 
             # for name, param in model.aux_fpn_head.named_parameters():
             #     if param.requires_grad:
@@ -92,8 +87,9 @@ def validate_epoch(
             seg = seg.to(device)
             nodes = [node.to(device) for node in nodes]
             edges = [edge.to(device) for edge in edges]
+            pts_labels = [pts_label.to(device) for pts_label in pts_labels]
 
-            targets = {'nodes': nodes, 'edges': edges, 'segs':seg}
+            targets = {'nodes': nodes, 'edges': edges, 'segs':seg, 'pts_labels':pts_labels}
             wh = torch.ones(1,2).to(device) * 0.05
             targets['labels'] = [torch.zeros(len(x)).long().to(device) for x in targets['nodes']]
             targets['boxes'] = [torch.cat([x, wh.repeat(len(x), 1)], dim=-1) for x in targets['nodes']]
@@ -102,7 +98,7 @@ def validate_epoch(
             with torch.no_grad():
                 h, out, srcs = model(images, targets=targets_converted)
 
-            losses = loss_fn(h, out, {'nodes': nodes, 'edges': edges, 'segs':seg})
+            losses = loss_fn(h, out, targets)
             loss = losses['total']
             total_loss += loss.item()
 
@@ -113,21 +109,6 @@ def validate_epoch(
                 writer.add_scalar('Val/Loss', loss.item() / len(images), iters)
                 for loss_id in loss_keys:
                     writer.add_scalar(f'Val/Loss/{loss_id}', losses[f'{loss_id}'].item() / len(images), iters)
-                # writer.add_scalar('Val/Loss/class', losses['class'].item() / len(images), iters)
-                # writer.add_scalar('Val/Loss/nodes', losses['nodes'].item() / len(images), iters)
-                # writer.add_scalar('Val/Loss/boxes', losses['boxes'].item() / len(images), iters)
-
-                # if config.MODEL.DECODER.RLN_TOKEN > 0:
-                #     writer.add_scalar('Val/Loss/edges', losses['edges'].item() / len(images), iters)
-
-                # if loss_fn.seg:
-                #     writer.add_scalar('Val/Loss/segs', losses['segs'].item() / len(images), iters)
-
-                # if loss_fn.two_stage:
-                #     for i, l in enumerate(['class', 'boxes', 'cards', 'nodes']):
-                #         writer.add_scalar(f'Val/Loss/enc/{l}', losses[f'{l}_enc'].item() / len(images), iters)
-                #         for j in range(3):
-                #             writer.add_scalar(f'Val/Loss/aux/{j}/{l}', losses[f'{l}_aux_{j}'].item() / len(images), iters)
 
             tepoch.set_postfix(loss=loss.item() / len(images))
 
@@ -144,18 +125,11 @@ def save_checkpoint(model, optimizer, epoch, config):
         epoch (int): The current epoch number.
         checkpoint_path (str): The file path to save the checkpoint.
     """
-    # Prepare the checkpoint dictionary
     checkpoint = {
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict()
     }
-
-    # relation_embed_checkpoint = {
-    #     'epoch': epoch,
-    #     'model_state_dict': relation_embed.state_dict(),
-    #     'optimizer_state_dict': optimizer.state_dict()
-    # }
 
     # If using DDP, save the original model wrapped inside DDP
     if isinstance(model, torch.nn.parallel.DistributedDataParallel):
@@ -164,8 +138,4 @@ def save_checkpoint(model, optimizer, epoch, config):
     savedir = os.path.join(config.TRAIN.SAVE_PATH, "runs", '%s_%d' % (config.log.exp_name, config.DATA.SEED), 'models')
     os.makedirs(savedir, exist_ok=True)
     checkpoint_path = os.path.join(savedir, f'epochs_{epoch}.pth')
-    # relation_embed_checkpoint_path = os.path.join(savedir, f'relation_embed_epochs_{epoch}.pth')
-
-    # Save the checkpoint
     torch.save(checkpoint, checkpoint_path)
-    # torch.save(relation_embed_checkpoint, relation_embed_checkpoint_path)
