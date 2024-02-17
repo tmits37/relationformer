@@ -1,14 +1,13 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
 from torchvision.models import resnet18, resnet50
-from typing import List, Optional, Set
+from typing import Optional
 
 import torch_geometric.nn
 from torch_geometric.typing import Adj, Size
 from torch_sparse import SparseTensor
-from torch_scatter import gather_csr, scatter, segment_csr
+from torch_scatter import scatter
 
 
 def get_map_encoder(out_features=64, in_channels=3):
@@ -146,7 +145,8 @@ class LaneGNN(torch.nn.Module):
                                                         initial_x=initial_x)
         
         # [E, 1], [N, 1], [N, 1]
-        return self.edge_classifier(edge_attr), self.node_classifier(x), self.endpoint_classifier(x)
+        # return self.edge_classifier(edge_attr), self.node_classifier(x), self.endpoint_classifier(x)
+        return self.edge_classifier(edge_attr), self.endpoint_classifier(x)
 
         
 class CausalMessagePassing(torch_geometric.nn.MessagePassing):

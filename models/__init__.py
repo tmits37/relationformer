@@ -2,6 +2,7 @@
 from .relationformer_2D import build_relationformer, build_relation_embed
 from .relationDINO import build_relationformer_dino
 from .relationDINO_multiclass import build_relationformer_dino_multi
+from .relationDINO_polygnn import build_relationformer_dino_gnn
 
 
 def build_model(config, **kwargs):
@@ -9,4 +10,4 @@ def build_model(config, **kwargs):
 
 
 __all__ = ['build_relation_embed', 'build_relationformer_dino',
-           'build_relationformer_dino_multi']
+           'build_relationformer_dino_multi', 'build_relationformer_dino_gnn']

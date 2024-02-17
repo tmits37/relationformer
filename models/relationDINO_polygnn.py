@@ -1,18 +1,13 @@
 import torch
 import torch.nn.functional as F
-from torch import nn
-from copy import deepcopy
 
 from .deformable_detr_backbone import build_backbone
-from .relationDINO import RelationFormerDINO, build_deformable_transformer_dino, MLP
-from .utils import relation_infer # same as ..inference.relation_infer
-# from utils import scores_to_permutations, permutations_to_polygons
+from .relationDINO import RelationFormerDINO, build_deformable_transformer_dino
 
 import numpy as np
 from sklearn.neighbors import kneighbors_graph
 from scipy.sparse import csr_matrix
 
-from .gnn import GCN
 from .gnn.lanegnn import LaneGNN
 from .matcher import build_matcher
 
@@ -106,10 +101,6 @@ class RelationFormerDINOGNN(RelationFormerDINO):
     def __init__(self, encoder,  decoder, config):
         super(RelationFormerDINOGNN, self).__init__(encoder, decoder, config)
 
-        # Below for self-attention GNN
-        # self.correction_radius = 0.025 # 0.05 for [-1, 1] 0.025 for [0, 1]
-        # self.gnn = AttentionalGNN(self.config.MODEL.DECODER.HIDDEN_DIM, 4) # Default in polyworld
-
         self.H = self.config.DATA.IMG_SIZE[0] 
         self.edge_descriptors = config.MODEL.EDGE_DESCRIPTORS
         if self.edge_descriptors:
@@ -120,12 +111,8 @@ class RelationFormerDINOGNN(RelationFormerDINO):
                 hidden_layers=[config.MODEL.DECODER.HIDDEN_DIM*1],
                 output_dim=config.MODEL.DECODER.HIDDEN_DIM
             )
-            # self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*3, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
-            # self.relation_embed_dim = config.MODEL.DECODER.HIDDEN_DIM*3
             self.relation_embed = None
         else:
-            # self.relation_embed = MLP(config.MODEL.DECODER.HIDDEN_DIM*2, config.MODEL.DECODER.HIDDEN_DIM, 2, 3)
-            # self.relation_embed_dim = config.MODEL.DECODER.HIDDEN_DIM*2
             self.relation_embed = None
 
         self.obj_token = config.MODEL.DECODER.OBJ_TOKEN
@@ -137,11 +124,6 @@ class RelationFormerDINOGNN(RelationFormerDINO):
             graph_learner_input_dim = config.MODEL.DECODER.HIDDEN_DIM
 
         self.append_loc = config.MODEL.DECODER.APPEND_LOC
-        # self.graph_learner = GCN(
-        #     graph_learner_input_dim, 
-        #     int(config.MODEL.DECODER.HIDDEN_DIM // 2),
-        #     config.MODEL.DECODER.HIDDEN_DIM, 4, 0.1
-        # )
         self.graph_learner = LaneGNN(gnn_depth=6, 
                                     edge_geo_dim=16, 
                                     map_feat_dim=64, 
@@ -150,6 +132,7 @@ class RelationFormerDINOGNN(RelationFormerDINO):
                                     msg_dim=32, 
                                     in_channels=3)
         self.matcher = build_matcher(config)
+        self.directed = config.MODEL.GNN.DIRECTED
 
     def forward(self, samples, seg=True, targets=None):
         hs, out, srcs = super(RelationFormerDINOGNN, self).forward(samples, seg=seg, targets=targets)
@@ -157,7 +140,7 @@ class RelationFormerDINOGNN(RelationFormerDINO):
         # get the valid points
         h = hs[-1]
         object_token = h[...,:self.obj_token,:]
-        
+
         # Generally, the number of valid token is larger than target_nodes:
         if targets:
             cvt_node = [k['nodes'] for k in targets]
@@ -193,7 +176,7 @@ class RelationFormerDINOGNN(RelationFormerDINO):
 
         # Pred_nodes = [B, K, 2]
         # pred_nodes = out['pred_nodes'][..., :2]
-        edges, adjs = get_adj_matrix(pred_nodes,  num_link=6, distance=40/128, include_self=True, directed=False)
+        edges, adjs = get_adj_matrix(pred_nodes,  num_link=6, distance=40/128, include_self=True, directed=self.directed)
         pad_node_features, pad_adj = pad_nodes_adjs(node_features, adjs)
         pad_adj = pad_adj.float()
 
@@ -213,10 +196,11 @@ class RelationFormerDINOGNN(RelationFormerDINO):
                                                        edge_descriptors,
                                                        targets=targets)
         # [E, 1], [N, 1], [N, 1]
-        edge_classifier, node_classifier, endpoint_classifer = self.graph_learner(batch_graph)
+        # edge_classifier, node_classifier, endpoint_classifer = self.graph_learner(batch_graph)
+        edge_classifier, endpoint_classifer = self.graph_learner(batch_graph)
 
         out['edge_classifier'] = edge_classifier
-        out['node_classifier'] = node_classifier
+        # out['node_classifier'] = node_classifier
         out['endpoint_classifier'] = endpoint_classifer
         out['edge_index'] = batch_edge_index
 
@@ -237,7 +221,60 @@ class RelationFormerDINOGNN(RelationFormerDINO):
 
         return h, out, srcs
 
+    def sample_descriptors(self, feature_map, vertex_positions):
+        B, N, _ = vertex_positions.size()
+        _, D, H, W = feature_map.size()
 
+        feature_map = feature_map # [B, D, H, W]
+        # vertex_positions: [0,1)
+        init_vertex_positions = vertex_positions * torch.tensor([[H -1, W - 1]], device=feature_map.device)
+        
+        # Normalize vertex positions to [-1, 1] for grid_sample)
+        vertex_positions_normalized = init_vertex_positions.float() / torch.tensor([[H - 1, W - 1]], device=feature_map.device) * 2 - 1
+
+        # Create all pairs of vertices (B, N, N, 2)
+        start_positions = vertex_positions_normalized.unsqueeze(2).unsqueeze(-1)  # Shape: [B, N, 1, 2, 1]
+        end_positions = vertex_positions_normalized.unsqueeze(1).unsqueeze(-1)  # Shape: [B, 1, N, 2, 1]
+
+        # Compute linearly spaced points between each pair of vertices
+        # For simplicity, let's sample 2 points on the line between vertex pairs
+        steps = torch.linspace(0, 1, steps=self.num_samples, device=feature_map.device).view(1, 1, 1, 1, self.num_samples)  # Shape: [1, 1, 1, 1, num_samples]
+
+        # # Linear combination to find the interpolated positions
+        interpolated_positions = (1 - steps) * start_positions + steps * end_positions  # Shape: [B, N, N, 2,num_samples]
+
+        # Reshape interpolated positions for grid_sample
+        # Flatten N, N, and num_samples dimensions
+        interpolated_positions = interpolated_positions.view(B, N*N*self.num_samples, 1, 2)
+
+        # Sample descriptors using grid_sample
+        sampled_descriptors = F.grid_sample(feature_map, interpolated_positions, mode='bilinear', align_corners=True)
+
+        # Reshape the sampled descriptors to match the MLP input
+        # B, D, (N*N*num_samples), 1 -> B, N*N, num_samples * D
+        sampled_descriptors = sampled_descriptors.squeeze(3)  # Remove the last dimension
+        sampled_descriptors = sampled_descriptors.view(B, D, N*N, self.num_samples)
+        sampled_descriptors = sampled_descriptors.permute(0, 2, 1, 3).reshape(B, N*N, D*self.num_samples)
+
+        # Mask to select unique edge pairs (upper triangle excluding diagonal)
+        mask = torch.triu(torch.ones(N, N, device=feature_map.device), diagonal=1).bool()
+        mask_flat = mask.view(-1)  # Flatten mask for indexing
+
+        # Apply MLP only on unique pairs
+        sampled_descriptors_unique = self.mlp_edge(sampled_descriptors[:, mask_flat])
+
+        # Create a complete N x N matrix for all edge descriptors
+        edge_descriptors = torch.zeros(B, N*N, sampled_descriptors_unique.size(-1), device=feature_map.device)
+        edge_descriptors[:, mask_flat] = sampled_descriptors_unique
+
+        # Copy descriptors to reverse edges
+        reverse_mask_flat = mask.t().contiguous().view(-1)
+        edge_descriptors[:, reverse_mask_flat] = sampled_descriptors_unique
+
+        # Reshape to [B, N, N, ...]
+        edge_descriptors = edge_descriptors.view(B, N, N, -1) # [B, N, N, D]
+
+        return edge_descriptors
 
     def convert_to_torch_geometric_graph(self,
                                          pred_nodes, 

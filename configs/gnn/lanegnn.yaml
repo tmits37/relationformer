@@ -60,6 +60,9 @@ MODEL:
   MATCHER:
     C_CLASS: 3
     C_NODE: 5
+  
+  GNN:
+    DIRECTED: True
 
 TRAIN:
   EPOCHS: 40
@@ -85,5 +88,5 @@ TRAIN:
 
 
 log:
-  exp_name: 'spacenet3_lanegnn_udig'
+  exp_name: 'spacenet3_lanegnn_dig'
   message: "Baseline 2D relationformer for spacenet3"

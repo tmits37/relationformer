@@ -297,61 +297,6 @@ class RelationFormerDINO(nn.Module):
         layers.append(nn.Linear(hidden_layers[-1], output_dim))
         return nn.Sequential(*layers)
 
-    def sample_descriptors(self, feature_map, vertex_positions):
-        B, N, _ = vertex_positions.size()
-        _, D, H, W = feature_map.size()
-
-        feature_map = feature_map # [B, D, H, W]
-        # vertex_positions: [0,1)
-        init_vertex_positions = vertex_positions * torch.tensor([[H -1, W - 1]], device=feature_map.device)
-        
-        # Normalize vertex positions to [-1, 1] for grid_sample)
-        vertex_positions_normalized = init_vertex_positions.float() / torch.tensor([[H - 1, W - 1]], device=feature_map.device) * 2 - 1
-
-        # Create all pairs of vertices (B, N, N, 2)
-        start_positions = vertex_positions_normalized.unsqueeze(2).unsqueeze(-1)  # Shape: [B, N, 1, 2, 1]
-        end_positions = vertex_positions_normalized.unsqueeze(1).unsqueeze(-1)  # Shape: [B, 1, N, 2, 1]
-
-        # Compute linearly spaced points between each pair of vertices
-        # For simplicity, let's sample 2 points on the line between vertex pairs
-        steps = torch.linspace(0, 1, steps=self.num_samples, device=feature_map.device).view(1, 1, 1, 1, self.num_samples)  # Shape: [1, 1, 1, 1, num_samples]
-
-        # # Linear combination to find the interpolated positions
-        interpolated_positions = (1 - steps) * start_positions + steps * end_positions  # Shape: [B, N, N, 2,num_samples]
-
-        # Reshape interpolated positions for grid_sample
-        # Flatten N, N, and num_samples dimensions
-        interpolated_positions = interpolated_positions.view(B, N*N*self.num_samples, 1, 2)
-
-        # Sample descriptors using grid_sample
-        sampled_descriptors = F.grid_sample(feature_map, interpolated_positions, mode='bilinear', align_corners=True)
-
-        # Reshape the sampled descriptors to match the MLP input
-        # B, D, (N*N*num_samples), 1 -> B, N*N, num_samples * D
-        sampled_descriptors = sampled_descriptors.squeeze(3)  # Remove the last dimension
-        sampled_descriptors = sampled_descriptors.view(B, D, N*N, self.num_samples)
-        sampled_descriptors = sampled_descriptors.permute(0, 2, 1, 3).reshape(B, N*N, D*self.num_samples)
-
-        # Mask to select unique edge pairs (upper triangle excluding diagonal)
-        mask = torch.triu(torch.ones(N, N, device=feature_map.device), diagonal=1).bool()
-        mask_flat = mask.view(-1)  # Flatten mask for indexing
-
-        # Apply MLP only on unique pairs
-        sampled_descriptors_unique = self.mlp_edge(sampled_descriptors[:, mask_flat])
-
-        # Create a complete N x N matrix for all edge descriptors
-        edge_descriptors = torch.zeros(B, N*N, sampled_descriptors_unique.size(-1), device=feature_map.device)
-        edge_descriptors[:, mask_flat] = sampled_descriptors_unique
-
-        # Copy descriptors to reverse edges
-        reverse_mask_flat = mask.t().contiguous().view(-1)
-        edge_descriptors[:, reverse_mask_flat] = sampled_descriptors_unique
-
-        # Reshape to [B, N, N, ...]
-        edge_descriptors = edge_descriptors.view(B, N, N, -1) # [B, N, N, D]
-
-        return edge_descriptors
-
 
 class MLP(nn.Module):
     """ Very simple multi-layer perceptron (also called FFN)"""

@@ -1,3 +1,3 @@
-from .idgl_gnn import (GCN, GAT, LinkGNN, LinkPredictor)
+from .lanegnn import LaneGNN
 
-__all__ = ['GCN', 'GAT', 'LinkGNN', 'LinkPredictor']
+__all__ = ['LaneGNN']

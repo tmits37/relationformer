@@ -7,14 +7,14 @@ import torch
 from torch.utils.data import DataLoader
 from datasets.dataset_road_network import build_road_network_data
 from models import (build_model, build_relationformer_dino, 
-                    build_relationformer_dino_multi)
+                    build_relationformer_dino_multi, build_relationformer_dino_gnn)
 from utils import image_graph_collate_road_network
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel
 from models.matcher import build_matcher
 
-from losses import SetCriterion
+from losses import SetCriterion, GraphCriterion
 import torch.multiprocessing
 
 from trainer import train_epoch, validate_epoch, save_checkpoint
@@ -190,6 +190,9 @@ def main(args):
     elif config.MODEL.DECODER.TWO_STAGE_TYPE == 'dino_multi':
         print("Relationformer DINO multi")
         net = build_relationformer_dino_multi(config)
+    elif config.MODEL.DECODER.TWO_STAGE_TYPE == 'dino_gnn':
+        print("Relationformer DINO GNN")
+        net = build_relationformer_dino_gnn(config)
     else:
         net = build_model(config)
     matcher = build_matcher(config)
@@ -254,7 +257,11 @@ def main(args):
         net = net.to(device)
         matcher = matcher.to(device)
 
-    loss = SetCriterion(config, matcher, net, distributed=args.distributed).cuda(args.local_rank)
+
+    if config.MODEL.DECODER.TWO_STAGE_TYPE == 'dino_gnn':
+        loss = GraphCriterion(config, matcher, net, distributed=args.distributed).cuda(args.local_rank)
+    else:
+        loss = SetCriterion(config, matcher, net, distributed=args.distributed).cuda(args.local_rank)
 
     print("Check local rank or not")
     print("=======================")
