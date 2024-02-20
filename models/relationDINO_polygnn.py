@@ -105,12 +105,7 @@ class RelationFormerDINOGNN(RelationFormerDINO):
         self.edge_descriptors = config.MODEL.EDGE_DESCRIPTORS
         if self.edge_descriptors:
             print("you are now using edge descriptors")
-            self.num_samples = 4
-            self.mlp_edge = self._build_mlp(
-                input_dim=int(config.MODEL.DECODER.HIDDEN_DIM * self.num_samples),  # Concatenation of descriptors from two vertices
-                hidden_layers=[config.MODEL.DECODER.HIDDEN_DIM*1],
-                output_dim=config.MODEL.DECODER.HIDDEN_DIM
-            )
+            self.num_samples = 2
             self.relation_embed = None
         else:
             self.relation_embed = None
@@ -130,7 +125,7 @@ class RelationFormerDINOGNN(RelationFormerDINO):
                                     edge_dim=32, 
                                     node_dim=16, 
                                     msg_dim=32, 
-                                    in_channels=3)
+                                    map_token_dim=int(config.MODEL.DECODER.HIDDEN_DIM * self.num_samples))
         self.matcher = build_matcher(config)
         self.directed = config.MODEL.GNN.DIRECTED
 
@@ -189,7 +184,7 @@ class RelationFormerDINOGNN(RelationFormerDINO):
         edge_descriptors = self.sample_descriptors(srcs[0], pred_nodes)
         out['edge_descriptors'] = edge_descriptors
         # torch.save(out['edge_descriptors'].detach(), '/nas/k8s/dev/research/doyoungi/edge_descriptors.pt')
-
+        
         batch_graph, batch_edge_index = self.convert_to_torch_geometric_graph(pred_nodes, 
                                                        pad_adj, 
                                                        valid_token, 
@@ -204,6 +199,10 @@ class RelationFormerDINOGNN(RelationFormerDINO):
         out['endpoint_classifier'] = endpoint_classifer
         out['edge_index'] = batch_edge_index
 
+        # [B, 1, 1024]
+        # h = h + torch.mm(self.mlp_edge(torch.zeros((1, 1024), device=h.device)), 
+        #                        torch.zeros((256,1), device=h.device))
+
         # z_node_features = self.graph_learner(pad_node_features, pad_adj)
         # # If entered GNN, it's shape shuld be same as pad_node_features
         # for batch_id in range(h.shape[0]):
@@ -211,10 +210,7 @@ class RelationFormerDINOGNN(RelationFormerDINO):
         #     # non_zero_node_feature_id = torch.nonzero(torch.sum(pad_node_features[batch_id], dim=1)).squeeze(1)
         #     h[batch_id, node_id, :] = z_node_features[batch_id, :len(node_id)]
         # nearest-K-uppder bounds permutation matrix
-            
-        # if self.relation_embed:
-        #     h = h + torch.mm(self.relation_embed(torch.zeros((1, self.relation_embed_dim), device=h.device)), 
-        #                        torch.zeros((2,1), device=h.device))
+
         # import pickle
         # with open('/nas/k8s/dev/research/doyoungi/out.pkl', 'wb') as f:
         #     pickle.dump(out, f)
@@ -261,7 +257,8 @@ class RelationFormerDINOGNN(RelationFormerDINO):
         mask_flat = mask.view(-1)  # Flatten mask for indexing
 
         # Apply MLP only on unique pairs
-        sampled_descriptors_unique = self.mlp_edge(sampled_descriptors[:, mask_flat])
+        # sampled_descriptors_unique = self.mlp_edge(sampled_descriptors[:, mask_flat])
+        sampled_descriptors_unique = sampled_descriptors[:, mask_flat]
 
         # Create a complete N x N matrix for all edge descriptors
         edge_descriptors = torch.zeros(B, N*N, sampled_descriptors_unique.size(-1), device=feature_map.device)

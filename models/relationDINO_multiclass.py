@@ -14,8 +14,8 @@ class RelationFormerDINOmulti(RelationFormerDINO):
 
         pad_loc = out['dn_meta']['pad_size'] if out['dn_meta'] else 0
         sel_desc = hs[-1][:, pad_loc:, :] # [B, N, D]
-        multi_class_embed = self.multi_class_embed(sel_desc)
-        out['pts_pred_class'] = multi_class_embed
+        # multi_class_embed = 
+        out['pts_pred_class'] = self.multi_class_embed(sel_desc)
         return hs, out, srcs
 
 

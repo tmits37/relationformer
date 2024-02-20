@@ -5,3 +5,7 @@ PyYAML==6.0
 svgwrite
 hopcroftkarp
 rtree
+# lanegnn
+torch-geometric==1.7.2
+torch-scatter==2.0.7
+torch-sparse==0.6.10

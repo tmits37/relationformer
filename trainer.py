@@ -53,10 +53,10 @@ def train_epoch(model,
                 for loss_id in loss_keys:
                     writer.add_scalar(f'Train/Loss/{loss_id}', losses[f'{loss_id}'].item() / len(images), iters)
 
-            # for name, param in model.aux_fpn_head.named_parameters():
+            # for name, param in model.mlp_edge.named_parameters():
             #     if param.requires_grad:
-            #         # print(param.grad)
-            #         writer.add_histogram(name + '_grad', param.grad, iters)
+            #         print(param.grad)
+            #         # writer.add_histogram(name + '_grad', param.grad, iters)
             
             tepoch.set_postfix(loss=loss.item() / len(images))
 
@@ -81,7 +81,7 @@ def validate_epoch(
         max_iter_in_epoch = len(tepoch)
         for idx, batch in enumerate(tepoch):
             tepoch.set_description(f"Val: {epoch}")
-            images, seg, nodes, edges = batch
+            images, seg, nodes, edges, pts_labels = batch
 
             images = images.to(device)
             seg = seg.to(device)

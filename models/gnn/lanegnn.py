@@ -40,7 +40,7 @@ def get_large_map_encoder(out_features=2048, in_channels=3):
 
 class LaneGNN(torch.nn.Module):
 
-    def __init__(self, gnn_depth, edge_geo_dim, map_feat_dim, edge_dim, node_dim, msg_dim, in_channels=3):
+    def __init__(self, gnn_depth, edge_geo_dim, map_feat_dim, edge_dim, node_dim, msg_dim, map_token_dim=256):
         """
         Definition of the LaneGNN architecture that performs encoding of node and edge features as well as
         causal message passing.
@@ -50,7 +50,6 @@ class LaneGNN(torch.nn.Module):
         :param edge_dim: dim of edge features in message passing stage
         :param node_dim: dim of node features in message passing stage
         :param msg_dim: dim of messages propagated in message passing stage
-        :param in_channels: dim of edge-wise aerial images
         """
 
         super(LaneGNN, self).__init__()
@@ -68,8 +67,9 @@ class LaneGNN(torch.nn.Module):
 
         # Encoding of aerial edge features
         # self.map_encoder = get_map_encoder(out_features=map_feat_dim, in_channels=in_channels)
+
         self.map_encoder = nn.Sequential(
-            nn.Linear(256, map_feat_dim*2),
+            nn.Linear(map_token_dim, map_feat_dim*2),
             nn.ReLU(inplace=True),
             nn.Linear(map_feat_dim*2, map_feat_dim),
         )

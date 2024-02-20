@@ -79,7 +79,7 @@ class Sat2GraphDataLoader(Dataset):
     Args:
         Dataset ([type]): [description]
     """
-    def __init__(self, data, transform):
+    def __init__(self, data, transform, multilabel=False):
         """[summary]
 
         Args:
@@ -92,6 +92,7 @@ class Sat2GraphDataLoader(Dataset):
 
         self.mean = [0.485, 0.456, 0.406]
         self.std = [0.229, 0.224, 0.225]
+        self.multilabel = multilabel
 
     def prepare_seg_sat2graph(self, seg):
         seg = (seg > 127).astype('float32')
@@ -153,11 +154,13 @@ class Sat2GraphDataLoader(Dataset):
         lines = torch.tensor(edges, dtype=torch.int64)
         
         # pts_labels
-        # coords_pts = np.round(np.float32(np.asarray(vtk_data.points))[:,:2] * image_data.shape[1]).astype('int64')
-        # pts_labels = get_pts_classes(
-        #     np.asarray(vtk_data.lines.reshape(-1, 3))[:,1:], 
-        #     coords_pts, image_data.shape[1:], boundary_ratio=0.075)
-        pts_labels = get_pts_gnn_classes(nodes, edges)
+        if self.multilabel:
+            coords_pts = np.round(np.float32(np.asarray(vtk_data.points))[:,:2] * image_data.shape[1]).astype('int64')
+            pts_labels = get_pts_classes(
+                np.asarray(vtk_data.lines.reshape(-1, 3))[:,1:], 
+                coords_pts, image_data.shape[1:], boundary_ratio=0.075)
+        else:
+            pts_labels = get_pts_gnn_classes(nodes, edges)
         pts_labels = torch.tensor(pts_labels, dtype=torch.int64)
 
         return image_data, seg_data, coordinates, lines, pts_labels
@@ -212,6 +215,7 @@ def build_road_network_data(config, mode="train", split=0.95, loadXYN=False):
         ds = Sat2GraphDataLoader(
             data=data_dicts,
             transform=train_transform,
+            multilabel=config.TRAIN.MULTI_CLASS,
         )
         return ds
     elif mode == "split":
@@ -241,10 +245,12 @@ def build_road_network_data(config, mode="train", split=0.95, loadXYN=False):
             train_ds = Sat2GraphDataLoader(
                 data=train_files,
                 transform=train_transform,
+                multilabel=config.TRAIN.MULTI_CLASS,
             )
             val_ds = Sat2GraphDataLoader(
                 data=val_files,
                 transform=val_transform,
+                multilabel=config.TRAIN.MULTI_CLASS,
             )
             return train_ds, val_ds
         # spacenet3 데이터는 val폴더를 참조하여 train val 훈련해야 함
@@ -253,6 +259,7 @@ def build_road_network_data(config, mode="train", split=0.95, loadXYN=False):
             train_ds = Sat2GraphDataLoader(
                 data=data_dicts,
                 transform=train_transform,
+                multilabel=config.TRAIN.MULTI_CLASS,
             )
             img_folder = os.path.join(config.DATA.VAL_DATA_PATH, "raw")
             seg_folder = os.path.join(config.DATA.VAL_DATA_PATH, "seg")
@@ -274,6 +281,7 @@ def build_road_network_data(config, mode="train", split=0.95, loadXYN=False):
             val_ds = Sat2GraphDataLoader(
                 data=data_dicts,
                 transform=val_transform,
+                multilabel=config.TRAIN.MULTI_CLASS,
             )
             return train_ds, val_ds
         raise  # debugging
@@ -303,6 +311,7 @@ def build_road_network_data(config, mode="train", split=0.95, loadXYN=False):
         ds = Sat2GraphDataLoader(
             data=data_dicts,
             transform=val_transform,
+            multilabel=config.TRAIN.MULTI_CLASS,
         )
         if loadXYN:
             return ds, file_infos  # 파일 인포를 넘겨주고 이후 save할때 지역을 명시한다. 그 지역이름으로 패치 합치기 진행

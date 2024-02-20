@@ -117,6 +117,7 @@ class SetCriterion(nn.Module):
         if self.multi_class:
             print("You WILL calculate multi loss")
             self.weight_dict['multi_class'] = 3.0
+            self.losses.append('multi_class')
 
         self.edge_descriptors = config.MODEL.EDGE_DESCRIPTORS
         if self.edge_descriptors:
